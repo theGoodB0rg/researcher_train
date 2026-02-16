@@ -1,0 +1,7 @@
+to do this research relaibly and not jus get surface level, I would like to build an ai agent, what do you suggest?:
+
+[So, I want to build a guaranteed 5k MRR SaaS. Perhaps something that people don't like to do themselves due to it being routine and boring.
+We of course certainly don't want to do what has already been done. So let's do research so we don't build something that has established competition already.
+
+
+I want something that is inherently sticky to avoid churn. I want to be able to build this in a month or less and deploy too. I don't have an ad/marketing budget to market it. It can't cost more than mere hosting and domain, maybe ai APIs too. I want something that would appeal to most everyday people to use.]
