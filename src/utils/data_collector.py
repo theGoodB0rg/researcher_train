@@ -29,7 +29,13 @@ class DataCollector:
         providers.append(WebSource())
         return providers
 
-    def collect(self, query: str, topic: str, limit: int = 15) -> Dict[str, Any]:
+    def collect(
+        self,
+        query: str,
+        topic: str,
+        limit: int = 15,
+        min_quality_threshold: Optional[float] = None,
+    ) -> Dict[str, Any]:
         """
         Collect real data from all configured providers with source provenance and diagnostics.
         """
@@ -97,7 +103,11 @@ class DataCollector:
             )
 
         deduped = self._dedupe_results(aggregated)[:limit]
-        quality_filtered, quality_summary = self._apply_quality_filters(deduped, topic=topic)
+        quality_filtered, quality_summary = self._apply_quality_filters(
+            deduped,
+            topic=topic,
+            min_quality_threshold=min_quality_threshold,
+        )
 
         by_source_quality = quality_summary.get("by_source", {})
         for source_type, stats in by_source_quality.items():
@@ -287,8 +297,14 @@ class DataCollector:
             deduped.append(result)
         return deduped
 
-    def _apply_quality_filters(self, results: List[Dict[str, Any]], topic: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        threshold = max(0.0, min(1.0, self.settings.min_record_quality_score))
+    def _apply_quality_filters(
+        self,
+        results: List[Dict[str, Any]],
+        topic: str,
+        min_quality_threshold: Optional[float] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        configured_threshold = self.settings.min_record_quality_score if min_quality_threshold is None else min_quality_threshold
+        threshold = max(0.0, min(1.0, configured_threshold))
         topic_terms = self._topic_terms(topic)
 
         accepted: List[Dict[str, Any]] = []

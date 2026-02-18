@@ -2,6 +2,7 @@ from termcolor import colored
 from src.core.agent import Agent
 from src.utils.data_collector import DataCollector
 from typing import List, Dict
+import re
 
 class ScoutAgent(Agent):
     def __init__(self, name: str, role: str, system_prompt: str, color: str = "cyan"):
@@ -12,14 +13,13 @@ class ScoutAgent(Agent):
         # Extract the core topic from the input
         # "Find complaints and issues related to: dental practice" -> "dental practice"
         topic = input_data.replace("Find complaints and issues related to:", "").strip()
+        query_seed = self._build_query_seed(topic)
         
         # Collect data from real sources (Reddit, HackerNews, Web)
         print(f"[Scout] Collecting real data for: {topic}")
-        collection_result = self.data_collector.collect(
-            query=f"{topic} problems complaints issues",
-            topic=topic,
-            limit=15
-        )
+        if query_seed.lower() != topic.lower():
+            print(colored(f"[Scout] Query seed (compacted): {query_seed}", "cyan"))
+        collection_result = self._collect_with_adaptive_strategy(topic=topic, query_seed=query_seed)
         
         # Check data quality
         if collection_result.get("data_quality") == "none":
@@ -67,6 +67,9 @@ class ScoutAgent(Agent):
         # Inject into prompt
         enriched_input = (
             f"{input_data}\n\n"
+            "[QUERY SEED]\n"
+            f"{query_seed}\n"
+            "[END QUERY SEED]\n\n"
             "[DATA QUALITY STATUS]\nPASS\n[END STATUS]\n\n"
             "[DATA START]\n"
             f"{formatted_data}\n"
@@ -76,3 +79,86 @@ class ScoutAgent(Agent):
         )
         
         return super().process(enriched_input, context)
+
+    def _build_query_seed(self, topic: str, max_terms: int = 7) -> str:
+        tokens = re.findall(r"[a-z0-9]+", (topic or "").lower())
+        if not tokens:
+            return topic
+
+        stop_words = {
+            "using",
+            "with",
+            "and",
+            "the",
+            "for",
+            "from",
+            "into",
+            "via",
+            "business",
+            "operations",
+            "workflow",
+            "workflows",
+            "pain",
+            "points",
+            "related",
+            "issues",
+        }
+        selected = []
+        seen = set()
+        for token in tokens:
+            if token in seen or token in stop_words:
+                continue
+            seen.add(token)
+            selected.append(token)
+            if len(selected) >= max_terms:
+                break
+
+        return " ".join(selected) if selected else " ".join(tokens[:max_terms])
+
+    def _collect_with_adaptive_strategy(self, topic: str, query_seed: str) -> Dict[str, object]:
+        strategies = [
+            {
+                "label": "pain_complaints",
+                "query": f"{query_seed} problems complaints issues",
+                "threshold": None,
+            },
+            {
+                "label": "feature_requests",
+                "query": f"{query_seed} feature requests wishlist alternatives workaround",
+                "threshold": 0.40,
+            },
+            {
+                "label": "demand_intent",
+                "query": f"{query_seed} intent demand unmet needs friction",
+                "threshold": 0.30,
+            },
+        ]
+
+        fallback_result = None
+        for index, strategy in enumerate(strategies, start=1):
+            if index > 1:
+                print(
+                    colored(
+                        f"[Scout] Adaptive retrieval attempt {index}/{len(strategies)}: {strategy['label']} "
+                        f"(threshold={strategy['threshold']:.2f})",
+                        "yellow",
+                    )
+                )
+
+            result = self.data_collector.collect(
+                query=strategy["query"],
+                topic=query_seed,
+                limit=15,
+                min_quality_threshold=strategy["threshold"],
+            )
+            fallback_result = result
+
+            if result.get("data_quality") != "none":
+                return result
+
+        return fallback_result or {
+            "topic": topic,
+            "query": query_seed,
+            "data_quality": "none",
+            "error": "Adaptive retrieval failed",
+        }

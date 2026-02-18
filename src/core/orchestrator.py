@@ -13,6 +13,7 @@ class Orchestrator:
         self.agents = agents
         self.max_iterations = max_iterations
         self.interactive_pivots = interactive_pivots
+        self._domain_shift_authorized_next_iteration = False
         self.conversation_history: List[Dict[str, str]] = []
         self.iteration_count = 0
         self.research_results: Dict[str, object] = {}
@@ -21,12 +22,14 @@ class Orchestrator:
     def _reset_run_state(self, topic: Optional[str]):
         self.conversation_history = []
         self.iteration_count = 0
+        self._domain_shift_authorized_next_iteration = False
         self.research_results = {
             "topic": topic,
             "mode": None,
             "iterations": [],
             "final_verdict": None,
             "final_idea": None,
+            "final_recommendation": None,
             "researched_at": datetime.now().isoformat(),
             "iteration_count": 0,
         }
@@ -37,6 +40,7 @@ class Orchestrator:
     def run_round_table(self, initial_topic: str) -> Dict[str, object]:
         self._reset_run_state(topic=initial_topic)
         topic = initial_topic
+        consecutive_no_data = 0
 
         print(colored(f"\n{'=' * 60}", "cyan"))
         print(colored(f"=== STARTING INTELLIGENT RESEARCH: {initial_topic.upper()} ===", "cyan"))
@@ -44,6 +48,8 @@ class Orchestrator:
 
         for iteration in range(1, self.max_iterations + 1):
             self.iteration_count = iteration
+            domain_shift_authorized = self._domain_shift_authorized_next_iteration
+            self._domain_shift_authorized_next_iteration = False
             print(colored(f"\n--- ITERATION {iteration}/{self.max_iterations} ---", "yellow"))
             self.conversation_history = []
 
@@ -60,13 +66,64 @@ class Orchestrator:
 
             scout_output = self._run_agent("Trend Scout", f"Find complaints and issues related to: {scout_topic}")
             if self._failed_data_collection(scout_output):
+                consecutive_no_data += 1
+                failure_reason = self._extract_data_failure_reason(scout_output)
+                hard_gates = {
+                    "blocked": True,
+                    "issues": [f"Data coverage gate failed: {failure_reason}"],
+                    "pivot": "Insufficient evidence - broaden to adjacent operational pain point",
+                }
                 self._append_iteration(
                     topic,
                     verdict="NO DATA",
                     topic_mode=topic_mode,
                     scout_topic=scout_topic,
+                    scorecard=self._build_low_evidence_scorecard(scout_output),
+                    hard_gates=hard_gates,
                 )
                 print(colored("[Orchestrator] Scout failed to collect real data. Iteration abandoned.", "red"))
+                if consecutive_no_data >= 2:
+                    print(
+                        colored(
+                            "[Orchestrator] Stopping early after repeated NO DATA. Please provide a cleaner B2B workflow topic.",
+                            "red",
+                        )
+                    )
+                    self.research_results["final_verdict"] = "NO_DATA_PIVOT_REQUIRED"
+                    self.research_results["final_recommendation"] = (
+                        "Provide a narrower, operator-owned B2B workflow with explicit recurring pain."
+                    )
+                    self.research_results["iteration_count"] = iteration
+                    return self.research_results
+                recovered_topic = self._recover_topic_after_no_data(topic=topic, topic_mode=topic_mode)
+                if recovered_topic != topic:
+                    print(colored(f"[Orchestrator] No-data recovery: '{topic}' -> '{recovered_topic}'", "yellow"))
+                    topic = recovered_topic
+                continue
+            consecutive_no_data = 0
+
+            if self._is_no_evidence_scout_output(scout_output):
+                opportunity = self._build_low_evidence_scorecard(scout_output)
+                hard_gates = {
+                    "blocked": True,
+                    "issues": ["No evidence gate failed: Scout found no explicit pain signals or recurring complaints."],
+                    "pivot": "Insufficient evidence - pivot to adjacent workflow pain point",
+                }
+                scorecard_text = self._format_scorecard(opportunity)
+                gate_text = self._format_hard_gates(hard_gates)
+                self.broadcast("Opportunity Scorer", scorecard_text)
+                self.broadcast("Gatekeeper", gate_text)
+                print(colored("[Orchestrator] No evidence signals found. Skipping strategist and forcing pivot.", "red"))
+                self._append_iteration(
+                    topic,
+                    verdict="NO GO",
+                    topic_mode=topic_mode,
+                    scout_topic=scout_topic,
+                    scorecard=opportunity,
+                    hard_gates=hard_gates,
+                )
+                print(colored(f"\n[REJECTED] Idea rejected. Reason: {hard_gates['pivot']}", "red"))
+                topic = self._next_topic(current_topic=topic, pivot_instruction=hard_gates["pivot"])
                 continue
 
             analyst_output = self._run_agent(
@@ -110,10 +167,15 @@ class Orchestrator:
             self.broadcast("Opportunity Scorer", scorecard_text)
 
             hard_gates = self._evaluate_hard_gates(
+                topic=topic,
+                scout_topic=scout_topic,
+                scout_output=scout_output,
+                analyst_output=analyst_output,
                 strategist_output=strategist_output,
                 competitor_output=competitor_output,
                 willingness_output=willingness_output,
                 sales_output=sales_output,
+                domain_shift_authorized=domain_shift_authorized,
             )
             gate_text = self._format_hard_gates(hard_gates)
             self.broadcast("Gatekeeper", gate_text)
@@ -224,6 +286,9 @@ class Orchestrator:
             "men",
             "women",
             "sex",
+            "linkedin",
+            "resume",
+            "portfolio",
             "fitness",
             "anxiety",
             "parenting",
@@ -237,6 +302,9 @@ class Orchestrator:
             return {"mode": "B2B_STRICT", "scout_topic": normalized}
 
         if any(term in lowered for term in consumer_terms):
+            if any(term in lowered for term in {"linkedin", "resume", "portfolio"}):
+                scout_topic = "recruitment and candidate profile management operations"
+                return {"mode": "B2B_ADJACENT", "scout_topic": scout_topic}
             if any(term in lowered for term in {"dating", "relationship", "men", "women", "sex"}):
                 scout_topic = "dating and relationship service business operations"
             elif any(term in lowered for term in {"fitness", "beauty", "anxiety"}):
@@ -271,6 +339,8 @@ class Orchestrator:
         normalized = (skeptic_output or "").lower()
         if "saturated" in normalized:
             return "Market is saturated - need different pain point"
+        if "insufficient evidence" in normalized or "no evidence" in normalized:
+            return "Insufficient evidence - pivot to adjacent workflow pain point"
         if "willingness" in normalized or "won't pay" in normalized:
             return "Low willingness to pay - raise price point for high-value customers"
         if "feasib" in normalized or "unrealistic" in normalized:
@@ -282,11 +352,20 @@ class Orchestrator:
     def _next_topic(self, current_topic: str, pivot_instruction: str) -> str:
         lower_pivot = pivot_instruction.lower()
         if "different pain point" in lower_pivot or "saturated" in lower_pivot:
+            self._domain_shift_authorized_next_iteration = True
             return self._suggest_new_topic(current_topic)
+        if "insufficient evidence" in lower_pivot or "no evidence" in lower_pivot:
+            topic_mode = self._classify_topic_mode(current_topic)["mode"]
+            self._domain_shift_authorized_next_iteration = True
+            return self._recover_topic_after_no_data(topic=current_topic, topic_mode=topic_mode)
         if "budget owner" in lower_pivot:
+            self._domain_shift_authorized_next_iteration = False
             return f"{current_topic} for operations managers"
         if "price point" in lower_pivot:
-            return f"{current_topic} for high-cost compliance workflows"
+            compacted = self._compact_topic_terms(current_topic)
+            self._domain_shift_authorized_next_iteration = False
+            return f"{compacted} for operations teams with budget ownership"
+        self._domain_shift_authorized_next_iteration = False
         return current_topic
 
     def _suggest_new_topic(self, current_topic: str) -> str:
@@ -312,6 +391,180 @@ class Orchestrator:
             colored(f"\n[Orchestrator] Suggested pivot: '{pivot}'. Enter new topic or press Enter to accept: ", "yellow")
         ).strip()
         return new_topic if new_topic else pivot
+
+    def _recover_topic_after_no_data(self, topic: str, topic_mode: str) -> str:
+        compacted = self._compact_topic_terms(topic)
+
+        if topic_mode == "B2B_ADJACENT":
+            recovered = f"{compacted} service operations pain points"
+        elif topic_mode == "B2B_STRICT":
+            recovered = f"{compacted} workflow bottlenecks"
+        else:
+            recovered = f"{compacted} operations workflow pain points"
+
+        recovered = re.sub(r"\s+", " ", recovered).strip()
+        if recovered.lower() == topic.lower():
+            recovered = f"{compacted} manual process pain points"
+        return recovered
+
+    def _compact_topic_terms(self, topic: str, max_terms: int = 7) -> str:
+        tokens = re.findall(r"[a-z0-9]+", (topic or "").lower())
+        if not tokens:
+            return topic
+        stop_words = {
+            "using",
+            "with",
+            "and",
+            "the",
+            "for",
+            "from",
+            "into",
+            "via",
+            "business",
+            "operations",
+            "workflow",
+            "workflows",
+            "pain",
+            "points",
+        }
+        selected: List[str] = []
+        seen = set()
+        for token in tokens:
+            if token in seen or token in stop_words:
+                continue
+            seen.add(token)
+            selected.append(token)
+            if len(selected) >= max_terms:
+                break
+        return " ".join(selected) if selected else " ".join(tokens[:max_terms])
+
+    def _extract_data_failure_reason(self, scout_output: str) -> str:
+        text = scout_output or ""
+        match = re.search(r"\[DATA COLLECTION FAILED\]\s*(.+)", text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        return "Insufficient real-source coverage"
+
+    def _is_no_evidence_scout_output(self, scout_output: str) -> bool:
+        lowered = (scout_output or "").lower()
+        evidence_gap_markers = [
+            "no pain signals",
+            "lack of pain signals",
+            "no significant operational pains",
+            "absence of specific complaints",
+            "no explicit complaints",
+            "no expressed frustration",
+            "insufficient user feedback",
+        ]
+        return any(marker in lowered for marker in evidence_gap_markers)
+
+    def _build_low_evidence_scorecard(self, scout_output: str) -> Dict[str, Any]:
+        frequency = self._score_frequency(scout_output)
+        return {
+            "pain": 15.0,
+            "frequency": round(max(15.0, min(45.0, frequency)), 1),
+            "willingness": 20.0,
+            "competition": 50.0,
+            "buildability": 35.0,
+            "mode_fit": 70.0,
+            "weighted_score": 27.0,
+        }
+
+    def _check_evidence_grounding(self, scout_output: str, analyst_output: str) -> Optional[str]:
+        scout_urls = self._extract_urls(scout_output)
+        if not scout_urls:
+            return None
+
+        pain_count = len(re.findall(r"boring score\s*:\s*\d+(?:\.\d+)?", analyst_output or "", flags=re.IGNORECASE))
+        analyst_url_mentions = len(re.findall(r"https?://[^\s\]\)\>,]+", analyst_output or "", flags=re.IGNORECASE))
+        analyst_urls = self._extract_urls(analyst_output)
+
+        if pain_count > 0 and analyst_url_mentions < pain_count:
+            return f"found {pain_count} accepted pains but only {analyst_url_mentions} URL citations"
+
+        missing = [url for url in analyst_urls if url not in scout_urls]
+        if missing:
+            missing_preview = ", ".join(missing[:3])
+            return f"analyst cited URL(s) not present in Scout evidence: {missing_preview}"
+        return None
+
+    def _extract_urls(self, text: str) -> List[str]:
+        if not text:
+            return []
+        matches = re.findall(r"https?://[^\s\]\)\>,]+", text, flags=re.IGNORECASE)
+        urls: List[str] = []
+        seen = set()
+        for match in matches:
+            normalized = self._normalize_url(match)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            urls.append(normalized)
+        return urls
+
+    def _normalize_url(self, raw_url: str) -> str:
+        url = (raw_url or "").strip().rstrip(".,);]>\"'")
+        return url.lower()
+
+    def _is_cross_domain_shift(self, topic: str, scout_topic: str, strategist_output: str) -> bool:
+        anchor_terms = self._domain_terms(topic) | self._domain_terms(scout_topic)
+        if not anchor_terms:
+            return False
+
+        strategist_terms = self._domain_terms(strategist_output)
+        overlap = anchor_terms & strategist_terms
+        return len(overlap) == 0
+
+    def _domain_terms(self, text: str) -> set:
+        tokens = re.findall(r"[a-z0-9]+", (text or "").lower())
+        stop_words = {
+            "the",
+            "and",
+            "for",
+            "with",
+            "from",
+            "into",
+            "using",
+            "tool",
+            "tools",
+            "software",
+            "saas",
+            "business",
+            "operations",
+            "workflow",
+            "workflows",
+            "pain",
+            "points",
+            "topic",
+            "one",
+            "two",
+            "three",
+            "teams",
+            "manager",
+            "managers",
+            "owner",
+            "owners",
+            "high",
+            "value",
+            "budget",
+        }
+        return {token for token in tokens if len(token) >= 4 and token not in stop_words}
+
+    def _extract_competitor_price_anchor(self, competitor_output: Optional[str]) -> Optional[float]:
+        if not competitor_output:
+            return None
+        text = competitor_output.lower()
+        monthly_values: List[float] = []
+
+        for match in re.finditer(r"\$(\d+(?:\.\d+)?)\s*/\s*(month|mo)\b", text, flags=re.IGNORECASE):
+            monthly_values.append(float(match.group(1)))
+
+        for match in re.finditer(r"\$(\d+(?:\.\d+)?)\s*/\s*year\b", text, flags=re.IGNORECASE):
+            monthly_values.append(float(match.group(1)) / 12.0)
+
+        if monthly_values:
+            return sum(monthly_values) / len(monthly_values)
+        return None
 
     def _build_opportunity_scorecard(
         self,
@@ -351,10 +604,15 @@ class Orchestrator:
 
     def _evaluate_hard_gates(
         self,
+        topic: str,
+        scout_topic: str,
+        scout_output: str,
+        analyst_output: str,
         strategist_output: str,
         competitor_output: Optional[str],
         willingness_output: Optional[str],
         sales_output: Optional[str],
+        domain_shift_authorized: bool,
     ) -> Dict[str, Any]:
         issues: List[str] = []
         pivot = "General market/product fit issues"
@@ -385,6 +643,28 @@ class Orchestrator:
             if feasibility == "DIFFICULT":
                 issues.append("Sales feasibility gate failed: founder-led path is marked DIFFICULT.")
                 pivot = "Sales feasibility too low - reduce MVP scope or pivot to easier customer acquisition"
+
+        evidence_issue = self._check_evidence_grounding(scout_output=scout_output, analyst_output=analyst_output)
+        if evidence_issue:
+            issues.append(f"Evidence grounding gate failed: {evidence_issue}")
+            pivot = "Evidence mismatch - map each accepted pain to explicit Scout URLs"
+
+        if not domain_shift_authorized and self._is_cross_domain_shift(topic=topic, scout_topic=scout_topic, strategist_output=strategist_output):
+            issues.append("Domain lock gate failed: Strategist shifted to an unrelated vertical without pivot authorization.")
+            pivot = "Unrelated pivot detected - keep solution inside current domain or explicitly authorize a pivot"
+
+        competitor_price_anchor = self._extract_competitor_price_anchor(competitor_output)
+        if (
+            competitor_price_anchor is not None
+            and price is not None
+            and competitor_price_anchor > 0
+            and price > (10 * competitor_price_anchor)
+            and not self._has_clear_wedge(strategist_output, competitor_output)
+        ):
+            issues.append(
+                "Pricing sanity gate failed: proposed price exceeds 10x competitor anchor without a differentiated wedge."
+            )
+            pivot = "Pricing anchor mismatch - align to market band or provide explicit differentiation"
 
         return {"blocked": len(issues) > 0, "issues": issues, "pivot": pivot}
 
