@@ -1,4 +1,4 @@
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from termcolor import colored
 from typing import List, Dict
 
@@ -7,7 +7,6 @@ from src.config import get_settings
 
 class SearchClient:
     def __init__(self):
-        self.ddgs = DDGS()
         self.allow_mock_data = get_settings().allow_mock_data
 
     def search(self, query: str, limit: int = 10) -> List[Dict[str, str]]:
@@ -17,8 +16,8 @@ class SearchClient:
         print(colored(f"[Scout] Searching Web for '{query}'...", "cyan"))
         results = []
         try:
-            # simple text search
-            search_results = self.ddgs.text(query, max_results=limit)
+            with DDGS() as ddgs:
+                search_results = ddgs.text(query, max_results=limit)
             if search_results:
                 for r in search_results:
                     results.append({
