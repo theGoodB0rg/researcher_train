@@ -84,6 +84,9 @@ class WillingnessToPayValidatorAgent(Agent):
             return signals
         
         for msg in context:
+            role = msg.get("role", "")
+            if role not in {"Trend Scout", "Pain Analyst"}:
+                continue
             text = msg.get("content", "").lower()
             
             # Look for any price-related mentions
@@ -104,11 +107,11 @@ class WillingnessToPayValidatorAgent(Agent):
         0.0 = no evidence, 1.0 = strong evidence
         """
         if not signals:
-            return 0.3  # Base score for unknown
+            return 0.2  # Weak baseline when no explicit willingness evidence is found.
         
         score = 0.0
-        strong_indicators = ["would pay", "willing to", "worth", "valuable", "invest"]
-        weak_indicators = ["expensive", "too much", "can't afford"]
+        strong_indicators = ["would pay", "willing to pay", "budget approved", "worth paying", "invest in"]
+        weak_indicators = ["expensive", "too much", "can't afford", "free alternative", "not worth"]
         
         for signal in signals:
             signal_lower = signal.lower()
@@ -116,15 +119,15 @@ class WillingnessToPayValidatorAgent(Agent):
             # Strong signals increase score
             for indicator in strong_indicators:
                 if indicator in signal_lower:
-                    score += 0.15
+                    score += 0.2
             
             # Weak signals decrease score
             for indicator in weak_indicators:
                 if indicator in signal_lower:
-                    score -= 0.1
+                    score -= 0.12
         
         # Cap at 1.0
-        return min(1.0, max(0.0, score + 0.4))
+        return min(1.0, max(0.0, score + 0.2))
     
     def _calculate_confidence(self, signals: List[str]) -> float:
         """Calculate confidence in the analysis based on signal strength."""

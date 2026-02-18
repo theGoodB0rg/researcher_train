@@ -50,6 +50,7 @@ ENV/
 
 # Project outputs and local data artifacts
 research_results_*.json
+calibration_results_*.json
 test_results.json
 *.sqlite3
 *.db

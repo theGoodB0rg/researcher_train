@@ -1,272 +1,86 @@
-# Quick Start Guide - Intelligent Research System v2
+# Quick Start Guide - Intelligent Research System v3
 
-## What You Now Have
+## What You Have
 
-An AI-powered research system that finds **real $5k MRR SaaS ideas in non-competitive markets** through:
-- Real community data (Reddit, HackerNews, web search)
-- Intelligent iteration (tries up to 5 different angles)
-- Market validation (competitor research + willingness to pay + sales feasibility)
-- Founder-sales optimization (high-value customers, no ads budget required)
+A B2B-first multi-agent research workflow optimized for realistic paths to $5k MRR:
+- Real-source scouting (Reddit/HackerNews/Web).
+- Context-aware routing (`B2B_STRICT`, `B2B_ADJACENT`, `B2B_DISCOVERY`).
+- Deterministic scorecard (pain, frequency, willingness, competition, buildability, mode-fit).
+- Hard gates (budget owner, price floor, competition wedge, sales feasibility).
+- Iterative pivots with non-repeating fallback topics.
+- Calibration harness for threshold tuning across topic batches.
 
-## Installation
+## Setup
 
 ```bash
-# 1. Install dependencies
 pip install -r requirements.txt
+```
 
-# 2. Configure environment
-# Edit .env file:
-OPENAI_API_KEY=sk-proj-...
+`.env` baseline:
+
+```env
+OPENAI_API_KEY=sk-your-key
 OPENAI_MODEL=gpt-4o
 MAX_ITERATIONS=5
 REQUIRE_REAL_DATA=true
 ALLOW_MOCK_DATA=false
 ENABLE_REDDIT_SOURCE=false
 MIN_RECORD_QUALITY_SCORE=0.50
-REDDIT_CLIENT_ID=...        # Optional (used only when ENABLE_REDDIT_SOURCE=true)
-REDDIT_CLIENT_SECRET=...
-REDDIT_USER_AGENT=researcher_v2
+SOURCE_TIMEOUT_SEC=8
 ```
 
-## Usage
+## Run
 
-### Option 1: Interactive Mode
+Interactive run:
+
 ```bash
 python src/main.py
-
-# System prompts you for a research topic
-# Runs intelligent iteration loop (up to 5 iterations)
-# Exports results to JSON
 ```
 
-**Example Topics**:
-- `freelance project managers dealing with scope creep`
-- `small accounting firms handling tax compliance`
-- `contractors hiring other contractors`
-- `subscription box businesses with churn issues`
-- `API integration companies serving SMBs`
+## Calibration Harness
 
-### Option 2: Automated Test
+Mock mode (deterministic, no API spend):
+
 ```bash
-python test_research.py
-
-# Automatically runs research on: "junior react developers facing career stagnation"
-# Exports: test_results.json
-# Shows system behavior end-to-end
+python -m src.tools.calibration_harness --topic "small business accounting" --topic "agency operations"
 ```
 
-## System Output
+Live mode (real agents + real sources):
 
-**Console**: Real-time agent decisions, validation feedback, iteration progress
-
-**JSON Export** (after research completes):
-```json
-{
-  "topic": "your research topic",
-  "final_verdict": "GO" | "QUALIFIED" | "NO_QUALIFIED_IDEA",
-  "final_idea": "ProductName: [Full strategist proposal]",
-  "iteration_count": 2,
-  "iterations": [
-    {"iteration": 1, "verdict": "NO GO", ...},
-    {"iteration": 2, "verdict": "QUALIFIED", ...}
-  ],
-  "researched_at": "2026-02-16T..."
-}
+```bash
+python -m src.tools.calibration_harness --live --topics-file topics.txt --max-iterations 3
 ```
 
-## How It Works
+Output file: `calibration_results_*.json`
 
-### 1. ITERATION LOOP (max 5 times)
+Contains:
+- Per-topic run metadata.
+- Per-iteration scorecard + gate diagnostics.
+- Aggregate verdict counts and weighted-score summaries.
+- Hard-gate failure frequencies for tuning.
 
-```
-Scout (finds real complaints)
-  ↓
-Analyst (filters for painkiller problems)
-  ↓
-Strategist (creates $5k MRR MVP idea)
-  ↓
-CompetitorResearcher (validates market gap)
-  ↓
-WillingnessValidator (checks if customers will pay)
-  ↓
-FounderSalesValidator (confirms founder can reach $5k)
-  ↓
-Skeptic (GO / NO GO verdict)
+## Result JSON (Main Orchestrator)
 
-If QUALIFIED/GO → ✓ Export results, done
-If NO GO → Analyze failure reason → Pivot & retry
-```
+`research_results_*.json` now includes:
+- `mode`: selected routing mode.
+- `iterations[].scorecard`: component-level scores + weighted score.
+- `iterations[].hard_gates`: blocked flag, issues, pivot reason.
 
-### 2. AUTO-PIVOT ON FAILURE
+## Validation Commands
 
-When Skeptic says NO GO, system auto-pivots:
-
-| Failure Reason | Action |
-|---|---|
-| Market saturated | Ask user for new topic, restart Scout |
-| Low willingness to pay | Return to Strategist, raise price point |
-| Unfeasible sales volume | Reduce MVP scope, simplify features |
-| Saturated market | Find adjacent market angle |
-
-## Key Decisions
-
-### Verdict Types
-
-- **GO**: Excellent idea, proceed to launch
-- **QUALIFIED**: Good idea after validation, proceed with caution  
-- **NO GO**: Market too saturated or unfeasible, needs pivot
-- **NO_QUALIFIED_IDEA**: Exhausted 5 iterations without qualified idea
-
-### Price Targeting
-
-System targets **HIGH-VALUE customers** ($300-500/mo), not low-value volume:
-- Easier to reach (founder outreach works)
-- No marketing budget required
-- Faster to $5k MRR (only need 10-15 customers)
-- Sustainable (better retention)
-
-### Data Quality
-
-All data is real or "fails loudly" by default:
-- ✓ Reddit posts with engagement (when credentials are present)
-- ✓ HackerNews stories via Algolia API
-- ✓ Web search results with URLs and timestamps
-- ✓ Per-source diagnostics (queries attempted, result counts, errors)
-- ✓ Quality scoring filters low-signal pages before Scout analysis (`MIN_RECORD_QUALITY_SCORE`)
-- ✗ NO synthetic fallback unless `ALLOW_MOCK_DATA=true`
-
-## Customization
-
-### Change Research Topic Mid-Run
-When prompted for new topic during pivot:
-```
-[Orchestrator] Suggest pivot to: 'small agency project management'? Or enter new topic: 
+```bash
+python -m unittest -v test_orchestrator.py test_competitor_researcher.py test_calibration_harness.py
+python -m py_compile src/core/orchestrator.py src/agents/competitor_researcher.py src/agents/founder_sales_validator.py src/agents/willingness_validator.py src/prompts.py src/tools/calibration_harness.py
 ```
 
-Just type a new topic and press Enter.
+## What Changed in This Iteration
 
-### Adjust Max Iterations
-Edit in `src/core/orchestrator.py`:
-```python
-self.max_iterations = 5  # Change to desired number
-```
-
-### Add More Data Sources
-Edit `src/utils/data_collector.py`:
-```python
-def collect(self, query, topic, limit=15):
-    # Add new collect_twitter(), collect_linkedin(), etc.
-```
-
-### Tune Agent Prompts
-Edit `src/prompts.py`:
-```python
-SKEPTIC_PROMPT = """
-Your customized instructions...
-"""
-```
-
-## Troubleshooting
-
-### No Real Data Found
-**Symptom**: "Scout failed to collect real data. Iteration abandoned."
-
-**Why**: Sources returned no valid records (or strict real-data mode rejected mixed-quality coverage)
-
-**Fix**: 
-- Ensure `ENABLE_REDDIT_SOURCE=false` if you are not using Reddit credentials
-- Try different search topic
-- Wait before retrying (rate limits)
-
-### Topic Exhausted (5 iterations)
-**Symptom**: "Reached max iterations (5). Stopping research."
-
-**Why**: System couldn't find $5k MRR idea with viable market gap
-
-**Fix**:
-- Restart with different topic
-- Try more specific niche
-- Consider different customer segment
-
-### Unicode Errors in Console
-**Symptom**: "UnicodeEncodeError" with special characters
-
-**Why**: Windows CMD can't render certain Unicode (✓, ✗, etc.)
-
-**Fix**: Already fixed in code - using ASCII alternatives
-
-## Metrics That Matter
-
-When evaluating research results:
-
-| Metric | Target | Signal |
-|--------|--------|--------|
-| Data Quality | >80% real sources | Trust the analysis |
-| Competitor Count | 0-3 | Market gap exists |
-| Willingness Score | >60% | Customers will pay |
-| Feasibility | VIABLE | Founder can achieve $5k in 1mo |
-| Iteration Count | <3 | Good product-market fit |
-
-## Next Steps After Research
-
-### If QUALIFIED/GO:
-1. Create founding customer list (10-15 high-value targets)
-2. Design outreach sequence (LinkedIn, cold email, communities)
-3. Build MVP (target: buildable in 1 month)
-4. Validate with 3-5 pre-sales conversations
-5. Launch beta (aim for $5k MRR by day 30)
-
-### If NO GO:
-1. Analyze Skeptic feedback for specific issue
-2. Adjust: market, pricing, features, customer segment
-3. Restart with new topic or pivot
-
-## Pro Tips
-
-1. **Be Specific with Topics**: "Contractors managing projects" → Better than "Project management"
-2. **Know Your Market**: Research existing tools before starting
-3. **Test Multiple Topics**: Run 5-10 research iterations to find patterns
-4. **Track Results**: Save all JSON outputs for pattern analysis
-5. **Iterate Based on Feedback**: If results are bad, adjust prompts (use `src/prompts.py`)
-
-## System Architecture
-
-```
-src/
-├── main.py                    # Entry point, agent setup
-├── agents/
-│   ├── scout.py              # Scrapes real community data
-│   ├── competitor_researcher.py
-│   ├── willingness_validator.py
-│   └── founder_sales_validator.py
-├── core/
-│   ├── agent.py              # Base agent + LLM interface
-│   └── orchestrator.py        # Iteration loop + pivoting logic
-├── utils/
-│   ├── data_collector.py      # Real data aggregation
-│   ├── reddit_client.py       # Reddit API
-│   └── search_client.py       # DuckDuckGo
-└── prompts.py                 # Agent system prompts
-```
-
-## Deployment
-
-Ready to deploy on:
-- **AWS Lambda**: Serverless, event-triggered research
-- **Modal**: Simple scaling, free tier available
-- **Local**: Development, single-run research
-- **Cron Job**: Automated daily/weekly research
-
-Would you like a deployment guide for any of these?
-
----
-
-## Questions?
-
-- **How long does research take?** ~2-3 minutes per iteration (gpt-4o inference)
-- **How much does it cost?** ~$0.10-0.30 per research (OpenAI API)
-- **Can I use different LLM?** Yes, edit `src/core/agent.py` to use any OpenAI-compatible API
-- **What if competitors exist?** System continues seeking high-value/low-volume niches
-- **Can ideas be refined?** Yes, Skeptic feedback can be used to pivot
-
-**Ready to find your first $5k MRR idea? Run `python src/main.py` now!**
+- Added context-aware topic mode router.
+- Added deterministic opportunity scoring.
+- Added hard-gate enforcement before acceptance.
+- Fixed repeated-topic pivot issue.
+- Fixed competitor pitch parsing/search-seed noise (`pitch pitch` issue).
+- Hardened monthly price extraction to avoid `$5k` parsing errors.
+- Tightened willingness-signal extraction to evidence-bearing sources.
+- Added calibration harness + tests.
+- Updated docs and ignored calibration output artifacts.

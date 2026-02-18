@@ -88,11 +88,28 @@ class FounderSalesValidatorAgent(Agent):
         for msg in reversed(context):
             if "SaaS Strategist" in msg.get("role", ""):
                 text = msg.get("content", "")
-                
-                # Look for price numbers ($X/month, $X per user, etc)
-                prices = re.findall(r'\$(\d+)', text)
-                if prices:
-                    pricing["monthly_price"] = int(prices[0])
+
+                # Prefer explicit monthly pricing references to avoid picking "$5k MRR".
+                monthly_patterns = [
+                    r"\$(\d+)\s*/\s*(?:month|mo)\b",
+                    r"\$(\d+)\s*(?:per|/)\s*(?:month|mo)\b",
+                    r"price point\s*[:\-]?\s*\$(\d+)",
+                ]
+                monthly_price = None
+                for pattern in monthly_patterns:
+                    match = re.search(pattern, text, flags=re.IGNORECASE)
+                    if match:
+                        monthly_price = int(match.group(1))
+                        break
+
+                if monthly_price is None:
+                    all_prices = [int(value) for value in re.findall(r"\$(\d+)", text)]
+                    filtered_prices = [value for value in all_prices if value >= 20]
+                    if filtered_prices:
+                        monthly_price = filtered_prices[0]
+
+                if monthly_price is not None:
+                    pricing["monthly_price"] = monthly_price
                 
                 # Look for target customer count
                 counts = re.findall(r'(\d+).*(?:users?|customers?|subscribers?)', text)
