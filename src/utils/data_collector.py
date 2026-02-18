@@ -5,6 +5,7 @@ Includes source-quality scoring and filtering before data reaches agents.
 
 import re
 from datetime import datetime
+from collections import Counter
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
@@ -35,6 +36,7 @@ class DataCollector:
         topic: str,
         limit: int = 15,
         min_quality_threshold: Optional[float] = None,
+        source_query_overrides: Optional[Dict[str, List[str]]] = None,
     ) -> Dict[str, Any]:
         """
         Collect real data from all configured providers with source provenance and diagnostics.
@@ -52,20 +54,25 @@ class DataCollector:
         per_source_limit = max(1, limit // len(self.providers))
 
         for provider in self.providers:
-            query_variants = [query]
-            if provider.source_type in {"hackernews", "web"}:
-                query_variants = self._build_query_variants(
-                    query=query,
-                    topic=topic,
-                    source_type=provider.source_type,
-                )
+            query_variants = self._resolve_query_variants(
+                query=query,
+                topic=topic,
+                source_type=provider.source_type,
+                source_query_overrides=source_query_overrides,
+            )
 
-            records, last_error, attempted_queries = self._collect_provider_records(
+            records, attempt_logs = self._collect_provider_records(
                 provider=provider,
                 topic=topic,
                 query_variants=query_variants,
                 limit=per_source_limit,
             )
+            attempted_queries = [entry.get("query", "") for entry in attempt_logs]
+            last_error = None
+            for attempt in reversed(attempt_logs):
+                if attempt.get("status") == "error" and attempt.get("error"):
+                    last_error = attempt["error"]
+                    break
 
             status = "ok" if records else "failed"
             source_diagnostics[provider.source_type] = {
@@ -74,10 +81,13 @@ class DataCollector:
                 "raw_records": len(records),
                 "results": len(records),
                 "attempted_queries": attempted_queries,
+                "query_attempts": attempt_logs,
                 "error": last_error,
                 "accepted_records": 0,
                 "dropped_low_quality": 0,
                 "avg_quality_score": 0.0,
+                "quality_rejection_reasons": {},
+                "quality_acceptance_signals": {},
             }
 
             if not records:
@@ -121,6 +131,8 @@ class DataCollector:
             diag["accepted_records"] = stats["accepted_records"]
             diag["dropped_low_quality"] = stats["dropped_low_quality"]
             diag["avg_quality_score"] = stats["avg_quality_score"]
+            diag["quality_rejection_reasons"] = stats.get("dropped_reason_counts", {})
+            diag["quality_acceptance_signals"] = stats.get("accepted_signal_counts", {})
             diag["quality_threshold"] = quality_summary["threshold"]
             if diag["accepted_records"] == 0 and diag["raw_records"] > 0:
                 diag["status"] = "filtered"
@@ -199,6 +211,12 @@ class DataCollector:
                     f"raw={diag.get('raw_records', 0)} accepted={diag.get('accepted_records', 0)} "
                     f"dropped={diag.get('dropped_low_quality', 0)} attempts={len(diag.get('attempted_queries', []))}"
                 )
+                dropped_reasons = diag.get("quality_rejection_reasons") or {}
+                if dropped_reasons:
+                    lines.append(
+                        "  dropped_reasons: "
+                        + ", ".join(f"{reason}={count}" for reason, count in dropped_reasons.items())
+                    )
                 if diag.get("error"):
                     lines.append(f"  error: {diag.get('error')}")
             return "\n".join(lines)
@@ -226,6 +244,12 @@ class DataCollector:
                 f"raw={diag.get('raw_records', 0)} accepted={diag.get('accepted_records', 0)} "
                 f"dropped={diag.get('dropped_low_quality', 0)} attempts={len(diag.get('attempted_queries', []))}"
             )
+            dropped_reasons = diag.get("quality_rejection_reasons") or {}
+            if dropped_reasons:
+                output.append(
+                    "  dropped_reasons: "
+                    + ", ".join(f"{reason}={count}" for reason, count in dropped_reasons.items())
+                )
             if diag.get("error"):
                 output.append(f"  error: {diag.get('error')}")
         output.append("")
@@ -249,25 +273,53 @@ class DataCollector:
         topic: str,
         query_variants: List[str],
         limit: int,
-    ) -> Tuple[List[Dict[str, Any]], Optional[str], List[str]]:
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         collected: List[Dict[str, Any]] = []
-        last_error: Optional[str] = None
-        attempted_queries: List[str] = []
+        attempt_logs: List[Dict[str, Any]] = []
 
         for candidate_query in query_variants:
-            attempted_queries.append(candidate_query)
             try:
                 records = provider.collect(query=candidate_query, topic=topic, limit=limit)
             except Exception as exc:
-                last_error = str(exc)
+                attempt_logs.append(
+                    {
+                        "query": candidate_query,
+                        "status": "error",
+                        "result_count": 0,
+                        "error": str(exc),
+                    }
+                )
                 continue
 
+            attempt_logs.append(
+                {
+                    "query": candidate_query,
+                    "status": "ok" if records else "empty",
+                    "result_count": len(records),
+                }
+            )
             if records:
                 collected.extend(records)
                 if len(collected) >= limit:
                     break
 
-        return collected[:limit], last_error, attempted_queries
+        return collected[:limit], attempt_logs
+
+    def _resolve_query_variants(
+        self,
+        query: str,
+        topic: str,
+        source_type: str,
+        source_query_overrides: Optional[Dict[str, List[str]]] = None,
+    ) -> List[str]:
+        overrides = source_query_overrides or {}
+        override_queries = overrides.get(source_type, [])
+        if override_queries:
+            return self._normalize_query_list([query] + override_queries)
+
+        if source_type in {"hackernews", "web"}:
+            return self._build_query_variants(query=query, topic=topic, source_type=source_type)
+        return [query]
 
     def _build_query_variants(self, query: str, topic: str, source_type: str) -> List[str]:
         if source_type == "hackernews":
@@ -292,6 +344,20 @@ class DataCollector:
         variants: List[str] = []
         seen: Set[str] = set()
         for candidate in candidates:
+            normalized = " ".join(candidate.lower().split())
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            variants.append(candidate)
+        return variants
+
+    def _normalize_query_list(self, candidates: List[str]) -> List[str]:
+        variants: List[str] = []
+        seen: Set[str] = set()
+        for candidate in candidates:
+            candidate = (candidate or "").strip()
+            if not candidate:
+                continue
             normalized = " ".join(candidate.lower().split())
             if normalized in seen:
                 continue
@@ -324,7 +390,7 @@ class DataCollector:
         accepted: List[Dict[str, Any]] = []
         dropped_count = 0
         total_quality = 0.0
-        by_source: Dict[str, Dict[str, float]] = {}
+        by_source: Dict[str, Dict[str, Any]] = {}
 
         for record in results:
             source_type = str(record.get("source_type", "unknown"))
@@ -335,6 +401,8 @@ class DataCollector:
                     "accepted_records": 0.0,
                     "dropped_low_quality": 0.0,
                     "quality_sum": 0.0,
+                    "dropped_reason_counts": Counter(),
+                    "accepted_signal_counts": Counter(),
                 },
             )
 
@@ -350,9 +418,13 @@ class DataCollector:
             if score >= threshold:
                 accepted.append(enriched)
                 stats["accepted_records"] += 1
+                for note in notes:
+                    stats["accepted_signal_counts"][note] += 1
             else:
                 dropped_count += 1
                 stats["dropped_low_quality"] += 1
+                for note in notes:
+                    stats["dropped_reason_counts"][note] += 1
 
         accepted.sort(key=lambda item: item.get("quality_score", 0.0), reverse=True)
 
@@ -365,6 +437,8 @@ class DataCollector:
                 "accepted_records": int(stats["accepted_records"]),
                 "dropped_low_quality": int(stats["dropped_low_quality"]),
                 "avg_quality_score": round(avg_quality, 3),
+                "dropped_reason_counts": self._top_reason_counts(stats["dropped_reason_counts"]),
+                "accepted_signal_counts": self._top_reason_counts(stats["accepted_signal_counts"]),
             }
 
         avg_all = (total_quality / len(results)) if results else 0.0
@@ -383,6 +457,12 @@ class DataCollector:
             "by_source": by_source_summary,
         }
         return accepted, summary
+
+    def _top_reason_counts(self, reason_counter: Counter, limit: int = 5) -> Dict[str, int]:
+        if not reason_counter:
+            return {}
+        ordered = sorted(reason_counter.items(), key=lambda item: (-item[1], item[0]))
+        return {reason: int(count) for reason, count in ordered[:limit]}
 
     def _score_record(self, record: Dict[str, Any], topic_terms: Set[str]) -> Tuple[float, List[str]]:
         source_type = str(record.get("source_type", "unknown")).lower()

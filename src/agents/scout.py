@@ -1,7 +1,7 @@
 from termcolor import colored
 from src.core.agent import Agent
 from src.utils.data_collector import DataCollector
-from typing import List, Dict
+from typing import List, Dict, Any
 import re
 
 class ScoutAgent(Agent):
@@ -10,16 +10,21 @@ class ScoutAgent(Agent):
         self.data_collector = DataCollector()
 
     def process(self, input_data: str, context: List[Dict[str, str]] = None) -> str:
-        # Extract the core topic from the input
-        # "Find complaints and issues related to: dental practice" -> "dental practice"
-        topic = input_data.replace("Find complaints and issues related to:", "").strip()
+        # Extract scoped topic + research mode from orchestrator prompt.
+        topic = self._extract_topic(input_data)
+        research_mode = self._extract_research_mode(input_data)
         query_seed = self._build_query_seed(topic)
         
         # Collect data from real sources (Reddit, HackerNews, Web)
         print(f"[Scout] Collecting real data for: {topic}")
+        print(colored(f"[Scout] Research mode: {research_mode}", "yellow"))
         if query_seed.lower() != topic.lower():
             print(colored(f"[Scout] Query seed (compacted): {query_seed}", "cyan"))
-        collection_result = self._collect_with_adaptive_strategy(topic=topic, query_seed=query_seed)
+        collection_result = self._collect_with_adaptive_strategy(
+            topic=topic,
+            query_seed=query_seed,
+            research_mode=research_mode,
+        )
         
         # Check data quality
         if collection_result.get("data_quality") == "none":
@@ -51,6 +56,10 @@ class ScoutAgent(Agent):
                 )
                 if diag.get("error"):
                     print(colored(f"    error={diag.get('error')}", "red"))
+                rejection_reasons = diag.get("quality_rejection_reasons") or {}
+                if rejection_reasons:
+                    top_reasons = ", ".join(f"{reason}={count}" for reason, count in rejection_reasons.items())
+                    print(colored(f"    dropped_reasons={top_reasons}", "red"))
             
             # Return deterministic failure marker for orchestrator parsing.
             failure_message = (
@@ -79,6 +88,21 @@ class ScoutAgent(Agent):
         )
         
         return super().process(enriched_input, context)
+
+    def _extract_topic(self, input_data: str) -> str:
+        marker = "Find complaints and issues related to:"
+        if marker not in input_data:
+            return input_data.strip()
+
+        remainder = input_data.split(marker, 1)[1].strip()
+        topic_line = remainder.splitlines()[0].strip()
+        return topic_line
+
+    def _extract_research_mode(self, input_data: str) -> str:
+        match = re.search(r"Research mode\s*:\s*([A-Z0-9_]+)", input_data, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+        return "B2B_DISCOVERY"
 
     def _build_query_seed(self, topic: str, max_terms: int = 7) -> str:
         tokens = re.findall(r"[a-z0-9]+", (topic or "").lower())
@@ -115,32 +139,18 @@ class ScoutAgent(Agent):
 
         return " ".join(selected) if selected else " ".join(tokens[:max_terms])
 
-    def _collect_with_adaptive_strategy(self, topic: str, query_seed: str) -> Dict[str, object]:
-        strategies = [
-            {
-                "label": "pain_complaints",
-                "query": f"{query_seed} problems complaints issues",
-                "threshold": None,
-            },
-            {
-                "label": "feature_requests",
-                "query": f"{query_seed} feature requests wishlist alternatives workaround",
-                "threshold": 0.40,
-            },
-            {
-                "label": "demand_intent",
-                "query": f"{query_seed} intent demand unmet needs friction",
-                "threshold": 0.30,
-            },
-        ]
+    def _collect_with_adaptive_strategy(self, topic: str, query_seed: str, research_mode: str) -> Dict[str, object]:
+        strategies = self._build_strategy_plan(query_seed=query_seed, research_mode=research_mode)
 
         fallback_result = None
         for index, strategy in enumerate(strategies, start=1):
             if index > 1:
+                threshold = strategy.get("threshold")
+                threshold_text = "default" if threshold is None else f"{threshold:.2f}"
                 print(
                     colored(
                         f"[Scout] Adaptive retrieval attempt {index}/{len(strategies)}: {strategy['label']} "
-                        f"(threshold={strategy['threshold']:.2f})",
+                        f"(threshold={threshold_text})",
                         "yellow",
                     )
                 )
@@ -150,6 +160,7 @@ class ScoutAgent(Agent):
                 topic=query_seed,
                 limit=15,
                 min_quality_threshold=strategy["threshold"],
+                source_query_overrides=strategy.get("source_query_overrides"),
             )
             fallback_result = result
 
@@ -162,3 +173,103 @@ class ScoutAgent(Agent):
             "data_quality": "none",
             "error": "Adaptive retrieval failed",
         }
+
+    def _build_strategy_plan(self, query_seed: str, research_mode: str) -> List[Dict[str, Any]]:
+        mode = (research_mode or "").upper()
+        if mode == "B2C_PLG":
+            return [
+                {
+                    "label": "user_frustrations",
+                    "query": f"{query_seed} problems complaints issues",
+                    "threshold": None,
+                    "source_query_overrides": {
+                        "hackernews": [
+                            f"{query_seed} ask hn alternatives",
+                            f"{query_seed} switched from",
+                            f"{query_seed} frustrations",
+                        ],
+                        "web": [
+                            f"{query_seed} user complaints",
+                            f"{query_seed} alternatives comparison",
+                            f"{query_seed} churn reasons",
+                            f"{query_seed} annoying workflow",
+                        ],
+                    },
+                },
+                {
+                    "label": "feature_requests",
+                    "query": f"{query_seed} feature requests wishlist alternatives workaround",
+                    "threshold": 0.38,
+                    "source_query_overrides": {
+                        "hackernews": [f"{query_seed} ask hn feature request"],
+                        "web": [
+                            f"{query_seed} feature request",
+                            f"{query_seed} missing features",
+                            f"{query_seed} workaround",
+                        ],
+                    },
+                },
+                {
+                    "label": "switching_triggers",
+                    "query": f"{query_seed} switched from alternatives why",
+                    "threshold": 0.32,
+                    "source_query_overrides": {
+                        "hackernews": [f"{query_seed} ask hn switched"],
+                        "web": [
+                            f"{query_seed} switched from",
+                            f"{query_seed} alternative to",
+                            f"{query_seed} better than",
+                        ],
+                    },
+                },
+            ]
+
+        # Default B2B strategy family.
+        return [
+            {
+                "label": "pain_complaints",
+                "query": f"{query_seed} problems complaints issues",
+                "threshold": None,
+                "source_query_overrides": {
+                    "hackernews": [
+                        f"{query_seed} ask hn ops",
+                        f"{query_seed} show hn automation",
+                        f"{query_seed} manual workflow",
+                    ],
+                    "web": [
+                        f"{query_seed} workflow bottlenecks",
+                        f"{query_seed} manual process pain points",
+                        f"{query_seed} operations complaints",
+                    ],
+                },
+            },
+            {
+                "label": "ops_workarounds",
+                "query": f"{query_seed} manual workflow workaround bottleneck",
+                "threshold": 0.45,
+                "source_query_overrides": {
+                    "hackernews": [
+                        f"{query_seed} ask hn workaround",
+                        f"{query_seed} spreadsheet hell",
+                    ],
+                    "web": [
+                        f"{query_seed} manual workaround",
+                        f"{query_seed} process delays",
+                        f"{query_seed} error-prone workflow",
+                    ],
+                },
+            },
+            {
+                "label": "cost_risk_signals",
+                "query": f"{query_seed} compliance risk delays penalties",
+                "threshold": 0.40,
+                "source_query_overrides": {
+                    "hackernews": [f"{query_seed} compliance automation"],
+                    "web": [
+                        f"{query_seed} compliance risk",
+                        f"{query_seed} audit errors",
+                        f"{query_seed} cost of manual process",
+                    ],
+                },
+            },
+        ]

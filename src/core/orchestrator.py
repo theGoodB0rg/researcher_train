@@ -71,7 +71,10 @@ class Orchestrator:
                 )
             )
 
-            scout_output = self._run_agent("Trend Scout", f"Find complaints and issues related to: {scout_topic}")
+            scout_output = self._run_agent(
+                "Trend Scout",
+                f"Find complaints and issues related to: {scout_topic}\nResearch mode: {topic_mode}",
+            )
             if self._failed_data_collection(scout_output):
                 consecutive_no_data += 1
                 failure_reason = self._extract_data_failure_reason(scout_output)

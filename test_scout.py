@@ -14,6 +14,28 @@ class ScoutQuerySeedTests(unittest.TestCase):
         self.assertNotIn("using", seed)
         self.assertNotIn("operations", seed)
 
+    def test_extracts_research_mode_from_prompt(self):
+        scout = ScoutAgent("Trend Scout", "Researcher", "test prompt")
+        mode = scout._extract_research_mode(
+            "Find complaints and issues related to: portfolio tools\nResearch mode: B2C_PLG"
+        )
+        self.assertEqual(mode, "B2C_PLG")
+
+    def test_b2c_strategy_contains_switching_triggers(self):
+        scout = ScoutAgent("Trend Scout", "Researcher", "test prompt")
+        strategies = scout._build_strategy_plan("portfolio resume builder", "B2C_PLG")
+        labels = [entry["label"] for entry in strategies]
+        self.assertIn("switching_triggers", labels)
+        self.assertIn("source_query_overrides", strategies[0])
+        self.assertIn("web", strategies[0]["source_query_overrides"])
+
+    def test_b2b_strategy_contains_workflow_and_cost_signals(self):
+        scout = ScoutAgent("Trend Scout", "Researcher", "test prompt")
+        strategies = scout._build_strategy_plan("accounts payable automation", "B2B_STRICT")
+        labels = [entry["label"] for entry in strategies]
+        self.assertIn("ops_workarounds", labels)
+        self.assertIn("cost_risk_signals", labels)
+
 
 if __name__ == "__main__":
     unittest.main()
