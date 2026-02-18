@@ -13,6 +13,7 @@ Criteria:
 Output format:
 - List of 5-10 specific complaints/observations from REAL SOURCE DATA.
 - Include source (Reddit/HackerNews) and engagement metrics.
+- Include URL and collected date for each observation.
 - Cite the 'vibe' of the complaints (e.g., "Angry", "Desperate", "Resigned").
 """
 
@@ -28,6 +29,7 @@ Criteria:
 - Validate that complaints come from REAL people, not synthetic examples.
 Output format:
 1. Top 3 Validated Problems (with source validation).
+   - Include evidence for each problem in this format: [source, URL, engagement].
 2. Why they persist (Competition sucks? Too niche? Recent reg change?).
 3. 'Boring Score' (1-10) - Higher is better.
 """
@@ -59,6 +61,7 @@ Criteria:
 - Consider if competitors solve THE EXACT PROBLEM or similar ones.
 Output format:
 1. Competitors Found (list with review counts if available).
+   - Include evidence domains and URLs used for discovery.
 2. Market Saturation Assessment (GREEN/YELLOW/RED).
 3. Differentiation Opportunities (if any exist).
 4. Recommendation: PROCEED or PIVOT.
@@ -76,6 +79,7 @@ Criteria:
 Output format:
 1. Price Willingness Score (0-100%).
 2. Key signals of payment intent (with quotes if available).
+   - Every signal must include supporting source and URL.
 3. Price elasticity: Is the proposed price appropriate?
 4. Recommendation: STRONG SIGNAL / WEAK SIGNAL / NO SIGNAL.
 """
@@ -110,6 +114,7 @@ Output format:
 1. **The Kill Switch**: The #1 reason this will fail (if any).
 2. **Validation Summary**: Market gap? Willingness to pay? Feasibility?
 3. **Final Verdict**: GO / QUALIFIED (proceed to validation) / NO GO (pivot)
+   - Use this exact line format for machine parsing: `Final Verdict: GO|QUALIFIED|NO GO`
 4. **If NO GO**: What should we pivot? (market saturation? price? audience? feature scope?)
    - If SATURATED_MARKET: "Return to Scout - Find different pain point"
    - If LOW_WILLINGNESS: "Return to Strategist - Raise price point for high-value customers"

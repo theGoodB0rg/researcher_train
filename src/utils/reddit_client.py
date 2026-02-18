@@ -2,13 +2,17 @@ import os
 import praw
 from typing import List, Dict
 from termcolor import colored
-import random
+
+from src.config import get_settings
 
 class RedditClient:
     def __init__(self):
+        settings = get_settings()
         self.client_id = os.getenv("REDDIT_CLIENT_ID")
         self.client_secret = os.getenv("REDDIT_CLIENT_SECRET")
         self.user_agent = os.getenv("REDDIT_USER_AGENT", "researcher_agent_v1")
+        self.allow_mock_data = settings.allow_mock_data
+        self.reddit = None
         
         if self.client_id and self.client_secret:
             try:
@@ -24,11 +28,11 @@ class RedditClient:
                 self.authenticated = False
         else:
             self.authenticated = False
-            print(colored("[System] No Reddit Credentials found. Using Mock Data.", "yellow"))
+            print(colored("[System] No Reddit credentials found. Reddit source will be skipped.", "yellow"))
 
     def search(self, query: str, subreddits: List[str] = None, limit: int = 10) -> List[Dict[str, str]]:
-        if not self.authenticated:
-            return self._get_mock_data(query)
+        if not self.authenticated or not self.reddit:
+            return self._maybe_mock(query)
 
         if not subreddits:
             subreddits = ["smallbusiness", "entrepreneur", "startups", "b2b", "marketing"]
@@ -49,13 +53,16 @@ class RedditClient:
                 })
         except Exception as e:
             print(colored(f"[Scout] Error processing Reddit search: {e}", "red"))
-            return self._get_mock_data(query) # Fallback
+            return self._maybe_mock(query)
 
         return results
 
-    def _get_mock_data(self, query: str) -> List[Dict[str, str]]:
-        """Fake data for testing without API keys."""
-        print(colored(f"[Scout] (MOCK) Searching for '{query}'...", "cyan"))
+    def _maybe_mock(self, query: str) -> List[Dict[str, str]]:
+        """Return mock data only when explicitly enabled by env settings."""
+        if not self.allow_mock_data:
+            return []
+
+        print(colored(f"[Scout] (MOCK MODE ENABLED) Returning mock Reddit data for '{query}'", "yellow"))
         return [
             {
                 "title": "I hate manually copying data from PDF invoices to Excel",

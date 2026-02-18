@@ -1,10 +1,11 @@
-import os
 from typing import List, Dict, Any
 from openai import OpenAI
 from termcolor import colored
+from src.config import get_settings
 
 class Agent:
     def __init__(self, name: str, role: str, system_prompt: str, color: str = "white"):
+        settings = get_settings()
         self.name = name
         self.role = role
         self.system_prompt = system_prompt
@@ -12,9 +13,9 @@ class Agent:
         self.memory: List[Dict[str, str]] = []
         
         # Initialize OpenAI
-        if os.getenv("OPENAI_API_KEY"):
-            self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-            self.model_name = "gpt-4o" # or gpt-3.5-turbo
+        if settings.openai_api_key:
+            self.client = OpenAI(api_key=settings.openai_api_key)
+            self.model_name = settings.openai_model
         else:
             self.client = None
             print(colored(f"[{self.name}] WARNING: No OpenAI API Key found. Running in Mock Mode.", "red"))

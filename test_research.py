@@ -15,6 +15,7 @@ from src.agents.scout import ScoutAgent
 from src.agents.competitor_researcher import CompetitorResearcherAgent
 from src.agents.willingness_validator import WillingnessToPayValidatorAgent
 from src.agents.founder_sales_validator import FounderSalesValidatorAgent
+from src.config import get_settings
 from src.prompts import (
     SCOUT_PROMPT, ANALYST_PROMPT, STRATEGIST_PROMPT, SKEPTIC_PROMPT,
     COMPETITOR_RESEARCHER_PROMPT, WILLINGNESS_PROMPT, FOUNDER_SALES_PROMPT
@@ -24,6 +25,7 @@ def test_research_system():
     """Test the intelligent research system with a single topic."""
     
     load_dotenv()
+    settings = get_settings()
     
     print("\n" + "="*60)
     print("INTELLIGENT RESEARCH SYSTEM - TEST RUN")
@@ -40,7 +42,7 @@ def test_research_system():
         "The Skeptic": Agent("The Skeptic", "VC", SKEPTIC_PROMPT, color="red"),
     }
     
-    orchestrator = Orchestrator(agents)
+    orchestrator = Orchestrator(agents, max_iterations=settings.max_iterations, interactive_pivots=False)
     
     # Test topic
     test_topic = "junior react developers facing career stagnation"

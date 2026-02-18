@@ -17,7 +17,11 @@ pip install -r requirements.txt
 # 2. Configure environment
 # Edit .env file:
 OPENAI_API_KEY=sk-proj-...
-REDDIT_CLIENT_ID=...        # Optional (system falls back to mock data)
+OPENAI_MODEL=gpt-4o
+MAX_ITERATIONS=5
+REQUIRE_REAL_DATA=true
+ALLOW_MOCK_DATA=false
+REDDIT_CLIENT_ID=...        # Optional (Reddit source is skipped if unset)
 REDDIT_CLIENT_SECRET=...
 REDDIT_USER_AGENT=researcher_v2
 ```
@@ -121,11 +125,11 @@ System targets **HIGH-VALUE customers** ($300-500/mo), not low-value volume:
 
 ### Data Quality
 
-All data is real or "fails loudly":
-- ✓ Reddit posts with upvotes/engagement
-- ✓ HackerNews top posts and comments
-- ✓ Web search results with sources
-- ✗ NO synthetic fallback - system refuses to proceed if data unavailable
+All data is real or "fails loudly" by default:
+- ✓ Reddit posts with engagement (when credentials are present)
+- ✓ HackerNews stories via Algolia API
+- ✓ Web search results with URLs and timestamps
+- ✗ NO synthetic fallback unless `ALLOW_MOCK_DATA=true`
 
 ## Customization
 

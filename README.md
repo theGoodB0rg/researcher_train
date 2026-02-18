@@ -13,10 +13,11 @@ The system operates as a sequential pipeline of four distinct AI personas, each 
 
 ## Features
 
--   **Autonomous Web Research**: Uses DuckDuckGo Search to fetch real-time data from forums, discussions, and articles without requiring external API keys.
+-   **Autonomous Web Research**: Uses modular source providers (Reddit, HackerNews, DuckDuckGo) with strict provenance metadata.
 -   **Multi-Agent Architecture**: Implements a modular agent system where context is passed and refined through strictly defined personas.
 -   **OpenAI Integration**: Powered by GPT-4o for high-level reasoning, synthesis, and critique.
 -   **Risk Analysis**: Includes a dedicated adversarial agent to identify "kill switches" and reasons for potential failure.
+-   **Strict Real-Data Mode**: Synthetic fallback is disabled by default (`ALLOW_MOCK_DATA=false`) so results are decision-grade.
 
 ## Prerequisites
 
@@ -56,9 +57,13 @@ The system operates as a sequential pipeline of four distinct AI personas, each 
 2.  Edit `.env` and add your OpenAI API key:
     ```env
     OPENAI_API_KEY=sk-your-api-key-here
+    OPENAI_MODEL=gpt-4o
+    MAX_ITERATIONS=5
+    REQUIRE_REAL_DATA=true
+    ALLOW_MOCK_DATA=false
     ```
 
-    *Note: The Reddit API keys in `.env` are legacy configuration and are no longer required for the default search mode.*
+    *Note: Reddit credentials are optional but recommended for stronger community-signal quality.*
 
 ## Usage
 

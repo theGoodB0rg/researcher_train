@@ -2,9 +2,13 @@ from duckduckgo_search import DDGS
 from termcolor import colored
 from typing import List, Dict
 
+from src.config import get_settings
+
+
 class SearchClient:
     def __init__(self):
         self.ddgs = DDGS()
+        self.allow_mock_data = get_settings().allow_mock_data
 
     def search(self, query: str, limit: int = 10) -> List[Dict[str, str]]:
         """
@@ -25,13 +29,15 @@ class SearchClient:
                     })
         except Exception as e:
             print(colored(f"[Scout] Search Error: {e}", "red"))
-            # Fallback mock data if search fails (e.g. rate limits)
-            return self._get_mock_data(query)
+            return self._maybe_mock_data(query)
 
         return results
 
-    def _get_mock_data(self, query: str) -> List[Dict[str, str]]:
-        """Fallback data."""
+    def _maybe_mock_data(self, query: str) -> List[Dict[str, str]]:
+        if not self.allow_mock_data:
+            return []
+
+        print(colored(f"[Scout] (MOCK MODE ENABLED) Returning mock web data for '{query}'", "yellow"))
         return [
             {
                 "title": "Forum: I hate doing payroll manually",

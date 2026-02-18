@@ -12,6 +12,7 @@ from src.agents.scout import ScoutAgent
 from src.agents.competitor_researcher import CompetitorResearcherAgent
 from src.agents.willingness_validator import WillingnessToPayValidatorAgent
 from src.agents.founder_sales_validator import FounderSalesValidatorAgent
+from src.config import get_settings
 from src.prompts import (
     SCOUT_PROMPT, ANALYST_PROMPT, STRATEGIST_PROMPT, SKEPTIC_PROMPT,
     COMPETITOR_RESEARCHER_PROMPT, WILLINGNESS_PROMPT, FOUNDER_SALES_PROMPT
@@ -20,6 +21,7 @@ from src.prompts import (
 def main():
     # Load env vars
     load_dotenv()
+    settings = get_settings()
     
     # Check for API keys
     if not os.getenv("OPENAI_API_KEY"):
@@ -39,7 +41,7 @@ def main():
     }
 
     # Initialize Orchestrator with agent dictionary
-    orchestrator = Orchestrator(agents)
+    orchestrator = Orchestrator(agents, max_iterations=settings.max_iterations, interactive_pivots=True)
 
     while True:
         topic = input(colored("\nEnter a research topic (or 'quit'): ", "white"))
