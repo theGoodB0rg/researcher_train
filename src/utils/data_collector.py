@@ -54,7 +54,11 @@ class DataCollector:
         for provider in self.providers:
             query_variants = [query]
             if provider.source_type in {"hackernews", "web"}:
-                query_variants = self._build_query_variants(query=query, topic=topic)
+                query_variants = self._build_query_variants(
+                    query=query,
+                    topic=topic,
+                    source_type=provider.source_type,
+                )
 
             records, last_error, attempted_queries = self._collect_provider_records(
                 provider=provider,
@@ -265,15 +269,25 @@ class DataCollector:
 
         return collected[:limit], last_error, attempted_queries
 
-    def _build_query_variants(self, query: str, topic: str) -> List[str]:
-        candidates = [
-            query,
-            f"{topic} complaints",
-            f"{topic} problems",
-            f"{topic} workflow bottlenecks",
-            f"{topic} manual process pain points",
-            f"{topic} software alternatives",
-        ]
+    def _build_query_variants(self, query: str, topic: str, source_type: str) -> List[str]:
+        if source_type == "hackernews":
+            candidates = [
+                query,
+                topic,
+                f"{topic} show hn",
+                f"{topic} launch",
+                f"{topic} hiring",
+                f"{topic} automation",
+            ]
+        else:
+            candidates = [
+                query,
+                f"{topic} complaints",
+                f"{topic} problems",
+                f"{topic} workflow bottlenecks",
+                f"{topic} manual process pain points",
+                f"{topic} software alternatives",
+            ]
 
         variants: List[str] = []
         seen: Set[str] = set()

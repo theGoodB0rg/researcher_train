@@ -26,6 +26,7 @@ class Orchestrator:
         self.research_results = {
             "topic": topic,
             "mode": None,
+            "buyer_brief": None,
             "iterations": [],
             "final_verdict": None,
             "final_idea": None,
@@ -39,7 +40,9 @@ class Orchestrator:
 
     def run_round_table(self, initial_topic: str) -> Dict[str, object]:
         self._reset_run_state(topic=initial_topic)
-        topic = initial_topic
+        buyer_brief = self._parse_buyer_first_brief(initial_topic)
+        topic = buyer_brief.get("pain", initial_topic) if buyer_brief else initial_topic
+        self.research_results["buyer_brief"] = buyer_brief
         consecutive_no_data = 0
 
         print(colored(f"\n{'=' * 60}", "cyan"))
@@ -53,9 +56,13 @@ class Orchestrator:
             print(colored(f"\n--- ITERATION {iteration}/{self.max_iterations} ---", "yellow"))
             self.conversation_history = []
 
-            topic_plan = self._classify_topic_mode(topic)
-            topic_mode = topic_plan["mode"]
-            scout_topic = topic_plan["scout_topic"]
+            if buyer_brief:
+                topic_mode = "B2B_BUYER_FIRST"
+                scout_topic = self._build_buyer_first_scout_topic(buyer_brief=buyer_brief, pain_focus=topic)
+            else:
+                topic_plan = self._classify_topic_mode(topic)
+                topic_mode = topic_plan["mode"]
+                scout_topic = topic_plan["scout_topic"]
             self.research_results["mode"] = topic_mode
             print(
                 colored(
@@ -85,13 +92,13 @@ class Orchestrator:
                 if consecutive_no_data >= 2:
                     print(
                         colored(
-                            "[Orchestrator] Stopping early after repeated NO DATA. Please provide a cleaner B2B workflow topic.",
+                            "[Orchestrator] Stopping early after repeated NO DATA. Please provide a narrower topic with clearer public evidence.",
                             "red",
                         )
                     )
                     self.research_results["final_verdict"] = "NO_DATA_PIVOT_REQUIRED"
                     self.research_results["final_recommendation"] = (
-                        "Provide a narrower, operator-owned B2B workflow with explicit recurring pain."
+                        "Provide a narrower workflow or user segment with explicit recurring pain and public discussion."
                     )
                     self.research_results["iteration_count"] = iteration
                     return self.research_results
@@ -123,24 +130,23 @@ class Orchestrator:
                     hard_gates=hard_gates,
                 )
                 print(colored(f"\n[REJECTED] Idea rejected. Reason: {hard_gates['pivot']}", "red"))
-                topic = self._next_topic(current_topic=topic, pivot_instruction=hard_gates["pivot"])
+                topic = self._next_topic(
+                    current_topic=topic,
+                    pivot_instruction=hard_gates["pivot"],
+                    topic_mode=topic_mode,
+                )
                 continue
 
+            analyst_prompt = self._analyst_prompt_for_mode(topic_mode=topic_mode, buyer_brief=buyer_brief)
             analyst_output = self._run_agent(
                 "Pain Analyst",
-                (
-                    "Analyze these findings for recurring operational pain in a B2B context. "
-                    f"Research mode: {topic_mode}. "
-                    "Include structured evidence fields: buyer, workflow step, frequency, current workaround, cost of inaction."
-                ),
+                analyst_prompt,
                 context=self.conversation_history,
             )
+            strategist_prompt = self._strategist_prompt_for_mode(topic_mode=topic_mode, buyer_brief=buyer_brief)
             strategist_output = self._run_agent(
                 "SaaS Strategist",
-                (
-                    "Propose a $5k MRR micro-SaaS solution for the identified problems. "
-                    "Target budget-owning buyers and keep monthly pricing high enough for a realistic path to $5k MRR."
-                ),
+                strategist_prompt,
                 context=self.conversation_history,
             )
 
@@ -151,7 +157,7 @@ class Orchestrator:
             )
             sales_output = self._run_optional_agent(
                 "Founder Sales Validator",
-                "Simulate if founders can reach $5k MRR with this idea:",
+                self._sales_prompt_for_mode(topic_mode=topic_mode),
             )
 
             opportunity = self._build_opportunity_scorecard(
@@ -176,6 +182,7 @@ class Orchestrator:
                 willingness_output=willingness_output,
                 sales_output=sales_output,
                 domain_shift_authorized=domain_shift_authorized,
+                topic_mode=topic_mode,
             )
             gate_text = self._format_hard_gates(hard_gates)
             self.broadcast("Gatekeeper", gate_text)
@@ -214,7 +221,7 @@ class Orchestrator:
             if verdict == "NO GO":
                 pivot = hard_gates["pivot"] if hard_gates["blocked"] else self._extract_pivot_instruction(skeptic_output)
                 print(colored(f"\n[REJECTED] Idea rejected. Reason: {pivot}", "red"))
-                topic = self._next_topic(current_topic=topic, pivot_instruction=pivot)
+                topic = self._next_topic(current_topic=topic, pivot_instruction=pivot, topic_mode=topic_mode)
             else:
                 print(colored(f"[Orchestrator] Unclear verdict: {verdict}. Retrying.", "yellow"))
 
@@ -279,8 +286,13 @@ class Orchestrator:
             "crm",
             "hr",
             "workflow",
+            "procurement",
+            "accounts payable",
+            "invoice",
+            "sop",
+            "back office",
         }
-        consumer_terms = {
+        b2c_plg_terms = {
             "dating",
             "relationship",
             "men",
@@ -296,24 +308,107 @@ class Orchestrator:
             "recipe",
             "beauty",
             "game",
+            "creator",
+            "course",
+            "newsletter",
+            "youtube",
+            "tiktok",
+            "instagram",
+            "template",
+            "plugin",
+            "portfolio",
+            "resume",
+            "linkedin",
         }
 
         if any(term in lowered for term in b2b_terms):
             return {"mode": "B2B_STRICT", "scout_topic": normalized}
 
-        if any(term in lowered for term in consumer_terms):
-            if any(term in lowered for term in {"linkedin", "resume", "portfolio"}):
-                scout_topic = "recruitment and candidate profile management operations"
-                return {"mode": "B2B_ADJACENT", "scout_topic": scout_topic}
-            if any(term in lowered for term in {"dating", "relationship", "men", "women", "sex"}):
-                scout_topic = "dating and relationship service business operations"
-            elif any(term in lowered for term in {"fitness", "beauty", "anxiety"}):
-                scout_topic = "wellness service business operations"
-            else:
-                scout_topic = f"{normalized} service business operations"
-            return {"mode": "B2B_ADJACENT", "scout_topic": scout_topic}
+        if any(term in lowered for term in b2c_plg_terms):
+            scout_topic = f"{normalized} user complaints feature requests alternatives"
+            return {"mode": "B2C_PLG", "scout_topic": scout_topic}
 
         return {"mode": "B2B_DISCOVERY", "scout_topic": f"{normalized} business operations"}
+
+    def _parse_buyer_first_brief(self, raw_topic: str) -> Optional[Dict[str, str]]:
+        text = (raw_topic or "").strip()
+        if not text:
+            return None
+
+        if not re.search(r"\bbuyer\s*:", text, flags=re.IGNORECASE):
+            return None
+
+        segments = [segment.strip() for segment in re.split(r"[;\|]", text) if segment.strip()]
+        parsed: Dict[str, str] = {}
+        for segment in segments:
+            match = re.match(r"^\s*([a-zA-Z_ ]+)\s*:\s*(.+)$", segment)
+            if not match:
+                continue
+            key = match.group(1).strip().lower().replace(" ", "_")
+            value = match.group(2).strip()
+            parsed[key] = value
+
+        buyer = parsed.get("buyer")
+        workflow = parsed.get("workflow")
+        pain = parsed.get("pain") or parsed.get("problem") or parsed.get("topic")
+        if not buyer or not workflow:
+            return None
+
+        return {
+            "buyer": buyer,
+            "workflow": workflow,
+            "pain": pain or "recurring operational bottlenecks",
+        }
+
+    def _build_buyer_first_scout_topic(self, buyer_brief: Dict[str, str], pain_focus: str) -> str:
+        buyer = buyer_brief.get("buyer", "").strip()
+        workflow = buyer_brief.get("workflow", "").strip()
+        pain = self._compact_topic_terms(pain_focus or buyer_brief.get("pain", ""))
+        return f"{buyer} {workflow} {pain} operational pain points".strip()
+
+    def _format_buyer_brief(self, buyer_brief: Optional[Dict[str, str]]) -> str:
+        if not buyer_brief:
+            return "None"
+        buyer = buyer_brief.get("buyer", "unknown")
+        workflow = buyer_brief.get("workflow", "unknown")
+        pain = buyer_brief.get("pain", "unknown")
+        return f"buyer={buyer}; workflow={workflow}; pain={pain}"
+
+    def _analyst_prompt_for_mode(self, topic_mode: str, buyer_brief: Optional[Dict[str, str]]) -> str:
+        if topic_mode == "B2C_PLG":
+            return (
+                "Analyze these findings for recurring user pain in a B2C/Prosumer product context. "
+                f"Research mode: {topic_mode}. "
+                "Extract concrete retention and conversion blockers with evidence. "
+                "Include structured evidence fields: user persona, user workflow step, frequency, current workaround, cost of inaction."
+            )
+        return (
+            "Analyze these findings for recurring operational pain in a B2B context. "
+            f"Research mode: {topic_mode}. "
+            f"Buyer Brief: {self._format_buyer_brief(buyer_brief)}. "
+            "Include structured evidence fields: buyer, workflow step, frequency, current workaround, cost of inaction."
+        )
+
+    def _strategist_prompt_for_mode(self, topic_mode: str, buyer_brief: Optional[Dict[str, str]]) -> str:
+        if topic_mode == "B2C_PLG":
+            return (
+                "Propose a realistic $5k MRR B2C/Prosumer PLG product for the identified problems. "
+                "Do not force enterprise framing. Use self-serve channels and realistic pricing ($5-$80/month). "
+                "Show a volume-based path to $5k MRR with explicit conversion assumptions."
+            )
+        return (
+            "Propose a $5k MRR micro-SaaS solution for the identified problems. "
+            "Target budget-owning buyers and keep monthly pricing high enough for a realistic path to $5k MRR. "
+            f"Buyer Brief: {self._format_buyer_brief(buyer_brief)}."
+        )
+
+    def _sales_prompt_for_mode(self, topic_mode: str) -> str:
+        if topic_mode == "B2C_PLG":
+            return (
+                "Simulate if a founder can reach $5k MRR for a self-serve PLG product in 30-90 days. "
+                "Estimate activation, free-to-paid conversion, and realistic paid customer counts."
+            )
+        return "Simulate if founders can reach $5k MRR with this idea:"
 
     def _failed_data_collection(self, scout_output: str) -> bool:
         output_upper = (scout_output or "").upper()
@@ -349,22 +444,28 @@ class Orchestrator:
             return "Technical complexity too high - simplify feature set"
         return "General market/product fit issues"
 
-    def _next_topic(self, current_topic: str, pivot_instruction: str) -> str:
+    def _next_topic(self, current_topic: str, pivot_instruction: str, topic_mode: Optional[str] = None) -> str:
+        active_mode = topic_mode or self._classify_topic_mode(current_topic)["mode"]
         lower_pivot = pivot_instruction.lower()
         if "different pain point" in lower_pivot or "saturated" in lower_pivot:
             self._domain_shift_authorized_next_iteration = True
             return self._suggest_new_topic(current_topic)
         if "insufficient evidence" in lower_pivot or "no evidence" in lower_pivot:
-            topic_mode = self._classify_topic_mode(current_topic)["mode"]
             self._domain_shift_authorized_next_iteration = True
-            return self._recover_topic_after_no_data(topic=current_topic, topic_mode=topic_mode)
+            return self._recover_topic_after_no_data(topic=current_topic, topic_mode=active_mode)
         if "budget owner" in lower_pivot:
             self._domain_shift_authorized_next_iteration = False
             return f"{current_topic} for operations managers"
         if "price point" in lower_pivot:
             compacted = self._compact_topic_terms(current_topic)
             self._domain_shift_authorized_next_iteration = False
+            if active_mode == "B2C_PLG":
+                return f"{compacted} for a narrower user segment with higher repeat usage"
             return f"{compacted} for operations teams with budget ownership"
+        if "willingness" in lower_pivot and active_mode == "B2C_PLG":
+            compacted = self._compact_topic_terms(current_topic)
+            self._domain_shift_authorized_next_iteration = False
+            return f"{compacted} with stronger activation and conversion hooks"
         self._domain_shift_authorized_next_iteration = False
         return current_topic
 
@@ -395,8 +496,8 @@ class Orchestrator:
     def _recover_topic_after_no_data(self, topic: str, topic_mode: str) -> str:
         compacted = self._compact_topic_terms(topic)
 
-        if topic_mode == "B2B_ADJACENT":
-            recovered = f"{compacted} service operations pain points"
+        if topic_mode == "B2C_PLG":
+            recovered = f"{compacted} user complaints and switching triggers"
         elif topic_mode == "B2B_STRICT":
             recovered = f"{compacted} workflow bottlenecks"
         else:
@@ -613,6 +714,42 @@ class Orchestrator:
         willingness_output: Optional[str],
         sales_output: Optional[str],
         domain_shift_authorized: bool,
+        topic_mode: str = "B2B_STRICT",
+    ) -> Dict[str, Any]:
+        if topic_mode == "B2C_PLG":
+            return self._evaluate_b2c_hard_gates(
+                topic=topic,
+                scout_topic=scout_topic,
+                scout_output=scout_output,
+                analyst_output=analyst_output,
+                strategist_output=strategist_output,
+                competitor_output=competitor_output,
+                willingness_output=willingness_output,
+                domain_shift_authorized=domain_shift_authorized,
+            )
+        return self._evaluate_b2b_hard_gates(
+            topic=topic,
+            scout_topic=scout_topic,
+            scout_output=scout_output,
+            analyst_output=analyst_output,
+            strategist_output=strategist_output,
+            competitor_output=competitor_output,
+            willingness_output=willingness_output,
+            sales_output=sales_output,
+            domain_shift_authorized=domain_shift_authorized,
+        )
+
+    def _evaluate_b2b_hard_gates(
+        self,
+        topic: str,
+        scout_topic: str,
+        scout_output: str,
+        analyst_output: str,
+        strategist_output: str,
+        competitor_output: Optional[str],
+        willingness_output: Optional[str],
+        sales_output: Optional[str],
+        domain_shift_authorized: bool,
     ) -> Dict[str, Any]:
         issues: List[str] = []
         pivot = "General market/product fit issues"
@@ -643,6 +780,70 @@ class Orchestrator:
             if feasibility == "DIFFICULT":
                 issues.append("Sales feasibility gate failed: founder-led path is marked DIFFICULT.")
                 pivot = "Sales feasibility too low - reduce MVP scope or pivot to easier customer acquisition"
+
+        evidence_issue = self._check_evidence_grounding(scout_output=scout_output, analyst_output=analyst_output)
+        if evidence_issue:
+            issues.append(f"Evidence grounding gate failed: {evidence_issue}")
+            pivot = "Evidence mismatch - map each accepted pain to explicit Scout URLs"
+
+        if not domain_shift_authorized and self._is_cross_domain_shift(topic=topic, scout_topic=scout_topic, strategist_output=strategist_output):
+            issues.append("Domain lock gate failed: Strategist shifted to an unrelated vertical without pivot authorization.")
+            pivot = "Unrelated pivot detected - keep solution inside current domain or explicitly authorize a pivot"
+
+        competitor_price_anchor = self._extract_competitor_price_anchor(competitor_output)
+        if (
+            competitor_price_anchor is not None
+            and price is not None
+            and competitor_price_anchor > 0
+            and price > (10 * competitor_price_anchor)
+            and not self._has_clear_wedge(strategist_output, competitor_output)
+        ):
+            issues.append(
+                "Pricing sanity gate failed: proposed price exceeds 10x competitor anchor without a differentiated wedge."
+            )
+            pivot = "Pricing anchor mismatch - align to market band or provide explicit differentiation"
+
+        return {"blocked": len(issues) > 0, "issues": issues, "pivot": pivot}
+
+    def _evaluate_b2c_hard_gates(
+        self,
+        topic: str,
+        scout_topic: str,
+        scout_output: str,
+        analyst_output: str,
+        strategist_output: str,
+        competitor_output: Optional[str],
+        willingness_output: Optional[str],
+        domain_shift_authorized: bool,
+    ) -> Dict[str, Any]:
+        issues: List[str] = []
+        pivot = "General market/product fit issues"
+
+        price = self._extract_monthly_price(strategist_output)
+        if price is None:
+            issues.append("Pricing gate failed: B2C_PLG strategy must include explicit monthly pricing.")
+            pivot = "Clarify price band and self-serve packaging"
+        elif price < 5 or price > 80:
+            issues.append("Pricing gate failed: B2C_PLG monthly price should generally stay in $5-$80 range.")
+            pivot = "Price-band mismatch - align to realistic PLG willingness"
+
+        if not self._has_plg_channel(strategist_output):
+            issues.append(
+                "Acquisition gate failed: B2C_PLG must include at least one self-serve channel (SEO/content/community/product-launch)."
+            )
+            pivot = "Distribution mismatch - add concrete PLG channel"
+
+        if willingness_output:
+            willingness_score = self._extract_willingness_score(willingness_output)
+            if willingness_score < 40:
+                issues.append("Payment intent gate failed: willingness signal is too weak (<40%) for B2C_PLG.")
+                pivot = "Low willingness to pay - improve activation and conversion proof"
+
+        if competitor_output:
+            saturation = self._extract_market_saturation(competitor_output)
+            if saturation == "RED" and not self._has_clear_wedge(strategist_output, competitor_output):
+                issues.append("Competition gate failed: market appears saturated with no clear wedge.")
+                pivot = "Market is saturated - focus on a narrower persona/use-case wedge"
 
         evidence_issue = self._check_evidence_grounding(scout_output=scout_output, analyst_output=analyst_output)
         if evidence_issue:
@@ -718,6 +919,10 @@ class Orchestrator:
     def _score_mode_fit(self, topic_mode: str, strategist_output: str) -> float:
         if topic_mode == "B2B_STRICT":
             return 100.0
+        if topic_mode == "B2C_PLG":
+            if self._has_plg_channel(strategist_output):
+                return 95.0
+            return 70.0
         if self._has_budget_owner(strategist_output):
             return 95.0
         return 70.0
@@ -779,6 +984,23 @@ class Orchestrator:
             "firm",
         ]
         return any(term in text for term in budget_terms)
+
+    def _has_plg_channel(self, strategist_output: str) -> bool:
+        text = (strategist_output or "").lower()
+        plg_terms = [
+            "seo",
+            "content",
+            "community",
+            "product hunt",
+            "app store",
+            "self-serve",
+            "freemium",
+            "free trial",
+            "template gallery",
+            "creator partnerships",
+            "social media",
+        ]
+        return any(term in text for term in plg_terms)
 
     def _has_clear_wedge(self, strategist_output: str, competitor_output: Optional[str]) -> bool:
         combined = f"{strategist_output}\n{competitor_output or ''}".lower()

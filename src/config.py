@@ -38,6 +38,8 @@ class Settings:
     enable_reddit_source: bool
     min_record_quality_score: float
     source_timeout_sec: int
+    hn_lookback_days: int
+    hn_include_comments: bool
 
 
 @lru_cache(maxsize=1)
@@ -51,4 +53,6 @@ def get_settings() -> Settings:
         enable_reddit_source=_parse_bool(os.getenv("ENABLE_REDDIT_SOURCE"), False),
         min_record_quality_score=_parse_float(os.getenv("MIN_RECORD_QUALITY_SCORE"), 0.50),
         source_timeout_sec=_parse_int(os.getenv("SOURCE_TIMEOUT_SEC"), 8),
+        hn_lookback_days=_parse_int(os.getenv("HN_LOOKBACK_DAYS"), 180),
+        hn_include_comments=_parse_bool(os.getenv("HN_INCLUDE_COMMENTS"), True),
     )

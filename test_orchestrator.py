@@ -53,11 +53,21 @@ class OrchestratorHardeningTests(unittest.TestCase):
         self.assertEqual(len(first["iterations"]), 1)
         self.assertEqual(len(second["iterations"]), 1)
 
-    def test_mode_classifier_routes_consumer_topics_to_b2b_adjacent(self):
+    def test_mode_classifier_routes_consumer_topics_to_b2c_plg(self):
         orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
         plan = orchestrator._classify_topic_mode("horny men and women")
-        self.assertEqual(plan["mode"], "B2B_ADJACENT")
-        self.assertIn("business operations", plan["scout_topic"])
+        self.assertEqual(plan["mode"], "B2C_PLG")
+        self.assertIn("feature requests", plan["scout_topic"])
+
+    def test_buyer_first_brief_parsing(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        brief = orchestrator._parse_buyer_first_brief(
+            "buyer: staffing agencies; workflow: candidate intake; pain: manual profile updates"
+        )
+        self.assertIsNotNone(brief)
+        self.assertEqual(brief["buyer"], "staffing agencies")
+        self.assertEqual(brief["workflow"], "candidate intake")
+        self.assertEqual(brief["pain"], "manual profile updates")
 
     def test_suggest_new_topic_never_repeats_original(self):
         orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
@@ -80,14 +90,62 @@ class OrchestratorHardeningTests(unittest.TestCase):
         self.assertTrue(gates["blocked"])
         self.assertIn("Price floor gate failed", gates["issues"][0])
 
-    def test_next_topic_price_pivot_avoids_compliance_suffix(self):
+    def test_next_topic_price_pivot_for_b2c_stays_plg(self):
         orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
         next_topic = orchestrator._next_topic(
             current_topic="portfolio website maker using resume or linkedin profile",
             pivot_instruction="Low willingness to pay - raise price point for high-value customers",
+            topic_mode="B2C_PLG",
         )
         self.assertNotIn("compliance", next_topic.lower())
+        self.assertIn("narrower user segment", next_topic.lower())
+
+    def test_next_topic_price_pivot_for_b2b_keeps_budget_owner_direction(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        next_topic = orchestrator._next_topic(
+            current_topic="staff scheduling",
+            pivot_instruction="Low willingness to pay - raise price point for high-value customers",
+            topic_mode="B2B_STRICT",
+        )
         self.assertIn("budget ownership", next_topic.lower())
+
+    def test_b2c_hard_gates_allow_realistic_plg_plan(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        gates = orchestrator._evaluate_hard_gates(
+            topic="portfolio website maker",
+            scout_topic="portfolio website maker user complaints",
+            scout_output="URL: https://example.com/source-a",
+            analyst_output="Boring Score: 6\nhttps://example.com/source-a",
+            strategist_output=(
+                "The Pitch: Portfolio website builder for designers.\n"
+                "Pricing Model: $19/month.\n"
+                "Acquisition Channel: SEO content and Product Hunt launch.\n"
+                "Target users: designers."
+            ),
+            competitor_output="Market Saturation Assessment: YELLOW",
+            willingness_output="Price Willingness Score: 48%",
+            sales_output=None,
+            domain_shift_authorized=False,
+            topic_mode="B2C_PLG",
+        )
+        self.assertFalse(gates["blocked"])
+
+    def test_b2c_hard_gates_block_missing_plg_channel(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        gates = orchestrator._evaluate_hard_gates(
+            topic="portfolio website maker",
+            scout_topic="portfolio website maker user complaints",
+            scout_output="URL: https://example.com/source-a",
+            analyst_output="Boring Score: 6\nhttps://example.com/source-a",
+            strategist_output="Pricing Model: $29/month for users.",
+            competitor_output=None,
+            willingness_output="Price Willingness Score: 52%",
+            sales_output=None,
+            domain_shift_authorized=False,
+            topic_mode="B2C_PLG",
+        )
+        self.assertTrue(gates["blocked"])
+        self.assertTrue(any("Acquisition gate failed" in issue for issue in gates["issues"]))
 
     def test_no_data_recovery_changes_topic_after_failure(self):
         agents = {
@@ -175,6 +233,28 @@ class OrchestratorHardeningTests(unittest.TestCase):
         )
         self.assertTrue(gates["blocked"])
         self.assertTrue(any("Pricing sanity gate failed" in issue for issue in gates["issues"]))
+
+    def test_buyer_first_mode_routes_scout_topic(self):
+        strategist_response = """
+1. The Pitch: IntakeOps for staffing agencies.
+2. Pricing Model: $250/month for staffing agencies.
+5. Budget Owner: Operations Manager.
+"""
+        agents = {
+            "Trend Scout": StubAgent("Trend Scout", "1. complaint from real source https://example.com/a"),
+            "Pain Analyst": StubAgent("Pain Analyst", "Boring Score: 8\nhttps://example.com/a"),
+            "SaaS Strategist": StubAgent("SaaS Strategist", strategist_response),
+            "The Skeptic": StubAgent("The Skeptic", "Final Verdict: GO"),
+        }
+        orchestrator = Orchestrator(agents, max_iterations=1, interactive_pivots=False)
+        results = orchestrator.run_round_table(
+            "buyer: staffing agencies; workflow: candidate intake; pain: manual profile updates"
+        )
+        self.assertEqual(results["mode"], "B2B_BUYER_FIRST")
+        self.assertIsNotNone(results["buyer_brief"])
+        first_iteration = results["iterations"][0]
+        self.assertIn("staffing agencies", first_iteration["scout_topic"].lower())
+        self.assertIn("candidate intake", first_iteration["scout_topic"].lower())
 
 
 if __name__ == "__main__":

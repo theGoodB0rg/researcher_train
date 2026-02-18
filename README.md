@@ -1,6 +1,6 @@
 # Expert Eureka
 
-Expert Eureka is a multi-agent research system for finding realistic B2B micro-SaaS opportunities with a path to $5k MRR. It combines real-source scouting with deterministic scoring, hard validation gates, and iterative pivots.
+Expert Eureka is a multi-agent research system for finding realistic B2B and B2C/Prosumer opportunities with a path to $5k MRR. It combines real-source scouting with deterministic scoring, hard validation gates, and iterative pivots.
 
 ## Overview
 
@@ -16,15 +16,16 @@ The system runs as a staged pipeline:
 
 - **Context-aware topic routing**
   - `B2B_STRICT`: direct B2B topics.
-  - `B2B_ADJACENT`: consumer topics are translated into business-operations pain.
+  - `B2C_PLG`: consumer/prosumer topics stay in self-serve PLG framing.
   - `B2B_DISCOVERY`: neutral topics are reframed into operational discovery.
 - **Deterministic opportunity scorecard**
   - Pain severity, frequency, willingness, competition whitespace, buildability, and mode-fit.
+- **Buyer-first entry mode**
+  - Accepts briefs like `buyer: staffing agencies; workflow: candidate intake; pain: manual profile updates`.
+  - Keeps research anchored to explicit buyer/workflow context.
 - **Hard gates before acceptance**
-  - Budget owner must be explicit.
-  - Monthly pricing should generally be \$150+.
-  - RED competition without a wedge blocks.
-  - DIFFICULT founder-sales feasibility blocks.
+  - `B2B`: budget owner explicit, monthly pricing generally \$150+, RED competition without wedge blocks, DIFFICULT founder-sales blocks.
+  - `B2C_PLG`: realistic self-serve pricing band (\$5-\$80), explicit PLG acquisition channel, competition wedge checks, and lower willingness threshold.
 - **Non-repeating pivot behavior**
   - Auto-pivots no longer loop on the same topic text.
 - **Competitor research hardening**
@@ -32,7 +33,7 @@ The system runs as a staged pipeline:
   - Cleaner search seed extraction.
 - **Validator extraction fixes**
   - Monthly price extraction no longer misreads `\$5k` as `\$5`.
-  - Willingness signals are restricted to evidence-bearing agent outputs.
+  - Willingness validation now uses a composite model (pricing anchors, budget fit, cost-of-inaction, substitution pressure), not only direct quote matching.
 - **Calibration harness**
   - Batch-run topics and export scorecards, gate failures, verdict stats for threshold tuning.
 
@@ -90,6 +91,9 @@ The system runs as a staged pipeline:
     ALLOW_MOCK_DATA=false
     ENABLE_REDDIT_SOURCE=false
     MIN_RECORD_QUALITY_SCORE=0.50
+    SOURCE_TIMEOUT_SEC=8
+    HN_LOOKBACK_DAYS=180
+    HN_INCLUDE_COMMENTS=true
     ```
 
     *Note: Set `ENABLE_REDDIT_SOURCE=true` only if you have working Reddit credentials.*
@@ -122,7 +126,8 @@ python -m src.tools.calibration_harness --live --topics-file topics.txt --max-it
 
 ### Operation
 1.  The system will initialize the agent team.
-2.  Enter a research topic or industry niche (e.g., "dental practice", "inventory management", "plumbers").
+2.  Enter a research topic or industry niche (e.g., "dental practice", "inventory management", "portfolio website builder for designers").
+   - Optional buyer-first format: `buyer: staffing agencies; workflow: candidate intake; pain: manual profile updates`
 3.  Observe mode routing, scorecard output, hard-gate decisions, and final verdicts.
 
 ## Project Structure

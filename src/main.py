@@ -27,7 +27,13 @@ def main():
     if not os.getenv("OPENAI_API_KEY"):
         print(colored("WARNING: OPENAI_API_KEY not found in .env. Agents will run in MOCK mode.", "yellow"))
 
-    print(colored("\n=== AI Co-Founder Team Initialized (v2 - Iterative Research) ===\n", "green", attrs=['bold']))
+    print(colored("\n=== AI Co-Founder Team Initialized (v3 - Buyer-Aware Iterative Research) ===\n", "green", attrs=['bold']))
+    print(
+        colored(
+            "Tip: buyer-first mode supported. Example: buyer: staffing agencies; workflow: candidate intake; pain: manual profile updates",
+            "yellow",
+        )
+    )
 
     # Initialize Agents (as dictionary for flexible orchestration)
     agents = {
