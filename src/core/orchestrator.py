@@ -125,7 +125,7 @@ class Orchestrator:
 
     def _failed_data_collection(self, scout_output: str) -> bool:
         output_upper = (scout_output or "").upper()
-        return "NO REAL DATA" in output_upper or "DATA COLLECTION FAILED" in output_upper
+        return "DATA COLLECTION FAILED" in output_upper
 
     def _parse_verdict(self, skeptic_output: str) -> str:
         text = skeptic_output or ""

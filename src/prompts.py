@@ -8,6 +8,7 @@ Criteria:
 - Look for emotional language: "hate", "annoying", "waste of time".
 - Look for manual processes: "copy-pasting", "entering data manually".
 - Ignore generic "I want to start a business" posts. Focus on "I have a problem" posts.
+- Down-rank generic SEO pages and vendor marketing copy; prioritize first-person complaints and operational pain evidence.
 - REAL DATA CHECK: The data provided below contains real posts with dates and sources. Trust this over any prior knowledge.
 - If data shows "NO REAL DATA" or "DATA COLLECTION FAILED", state this explicitly and refuse to proceed.
 Output format:

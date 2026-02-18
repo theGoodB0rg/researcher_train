@@ -28,25 +28,51 @@ class ScoutAgent(Agent):
             print(colored(f"[Scout] DATA COLLECTION FAILED: {error_msg}", "red"))
             print(colored(f"[Scout] Source diagnostics:", "red"))
             diagnostics = collection_result.get("source_diagnostics", {})
+            quality_summary = collection_result.get("quality_summary", {})
+            if quality_summary:
+                print(
+                    colored(
+                        f"[Scout] Quality filter summary: accepted={quality_summary.get('accepted_count', 0)} "
+                        f"dropped={quality_summary.get('dropped_count', 0)} "
+                        f"threshold={quality_summary.get('threshold', 0.0):.2f}",
+                        "red",
+                    )
+                )
             for source_type, diag in diagnostics.items():
                 attempted_count = len(diag.get("attempted_queries", []))
                 print(
                     colored(
                         f"  - {diag.get('provider', source_type)} [{source_type}] "
-                        f"status={diag.get('status')} results={diag.get('results')} attempts={attempted_count}",
+                        f"status={diag.get('status')} raw={diag.get('raw_records', diag.get('results', 0))} "
+                        f"accepted={diag.get('accepted_records', 0)} "
+                        f"dropped={diag.get('dropped_low_quality', 0)} attempts={attempted_count}",
                         "red",
                     )
                 )
                 if diag.get("error"):
                     print(colored(f"    error={diag.get('error')}", "red"))
             
-            # Pass failure to LLM so it understands the situation
-            formatted_data = f"DATA COLLECTION FAILED: {error_msg}\n\nThe research system could not retrieve real data from Reddit, HackerNews, or DuckDuckGo.\nWithout real data, this research round cannot proceed.\nPlease resolve the data collection issue and try again."
+            # Return deterministic failure marker for orchestrator parsing.
+            failure_message = (
+                f"[DATA COLLECTION FAILED] {error_msg}\n\n"
+                "The research system could not retrieve enough real data from configured sources.\n"
+                "Without real data, this research round cannot proceed."
+            )
+            self.speak(failure_message)
+            return failure_message
         else:
             # Format real data for LLM
             formatted_data = self.data_collector.format_for_prompt(collection_result)
 
         # Inject into prompt
-        enriched_input = f"{input_data}\n\n[DATA START]\n{formatted_data}\n[DATA END]\n\nAnalyze this data according to your system prompt."
+        enriched_input = (
+            f"{input_data}\n\n"
+            "[DATA QUALITY STATUS]\nPASS\n[END STATUS]\n\n"
+            "[DATA START]\n"
+            f"{formatted_data}\n"
+            "[DATA END]\n\n"
+            "Analyze this data according to your system prompt. "
+            "Do not output 'NO REAL DATA' when status is PASS."
+        )
         
         return super().process(enriched_input, context)

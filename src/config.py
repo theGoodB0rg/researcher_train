@@ -19,6 +19,15 @@ def _parse_int(raw_value: Optional[str], default: int) -> int:
         return default
 
 
+def _parse_float(raw_value: Optional[str], default: float) -> float:
+    if raw_value is None:
+        return default
+    try:
+        return float(raw_value)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class Settings:
     openai_api_key: Optional[str]
@@ -27,6 +36,7 @@ class Settings:
     require_real_data: bool
     allow_mock_data: bool
     enable_reddit_source: bool
+    min_record_quality_score: float
     source_timeout_sec: int
 
 
@@ -39,5 +49,6 @@ def get_settings() -> Settings:
         require_real_data=_parse_bool(os.getenv("REQUIRE_REAL_DATA"), True),
         allow_mock_data=_parse_bool(os.getenv("ALLOW_MOCK_DATA"), False),
         enable_reddit_source=_parse_bool(os.getenv("ENABLE_REDDIT_SOURCE"), False),
+        min_record_quality_score=_parse_float(os.getenv("MIN_RECORD_QUALITY_SCORE"), 0.50),
         source_timeout_sec=_parse_int(os.getenv("SOURCE_TIMEOUT_SEC"), 8),
     )

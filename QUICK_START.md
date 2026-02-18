@@ -22,6 +22,7 @@ MAX_ITERATIONS=5
 REQUIRE_REAL_DATA=true
 ALLOW_MOCK_DATA=false
 ENABLE_REDDIT_SOURCE=false
+MIN_RECORD_QUALITY_SCORE=0.50
 REDDIT_CLIENT_ID=...        # Optional (used only when ENABLE_REDDIT_SOURCE=true)
 REDDIT_CLIENT_SECRET=...
 REDDIT_USER_AGENT=researcher_v2
@@ -131,6 +132,7 @@ All data is real or "fails loudly" by default:
 - ✓ HackerNews stories via Algolia API
 - ✓ Web search results with URLs and timestamps
 - ✓ Per-source diagnostics (queries attempted, result counts, errors)
+- ✓ Quality scoring filters low-signal pages before Scout analysis (`MIN_RECORD_QUALITY_SCORE`)
 - ✗ NO synthetic fallback unless `ALLOW_MOCK_DATA=true`
 
 ## Customization

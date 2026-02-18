@@ -18,6 +18,7 @@ The system operates as a sequential pipeline of four distinct AI personas, each 
 -   **OpenAI Integration**: Powered by GPT-4o for high-level reasoning, synthesis, and critique.
 -   **Risk Analysis**: Includes a dedicated adversarial agent to identify "kill switches" and reasons for potential failure.
 -   **Strict Real-Data Mode**: Synthetic fallback is disabled by default (`ALLOW_MOCK_DATA=false`) so results are decision-grade.
+-   **Quality-Filtered Inputs**: Source evidence is scored and low-signal pages are filtered before analysis (`MIN_RECORD_QUALITY_SCORE`).
 
 ## Prerequisites
 
@@ -62,6 +63,7 @@ The system operates as a sequential pipeline of four distinct AI personas, each 
     REQUIRE_REAL_DATA=true
     ALLOW_MOCK_DATA=false
     ENABLE_REDDIT_SOURCE=false
+    MIN_RECORD_QUALITY_SCORE=0.50
     ```
 
     *Note: Set `ENABLE_REDDIT_SOURCE=true` only if you have working Reddit credentials.*
