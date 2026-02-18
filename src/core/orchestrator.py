@@ -25,6 +25,7 @@ class Orchestrator:
         self._domain_shift_authorized_next_iteration = False
         self.research_results = {
             "topic": topic,
+            "root_topic": None,
             "mode": None,
             "buyer_brief": None,
             "iterations": [],
@@ -42,7 +43,9 @@ class Orchestrator:
         self._reset_run_state(topic=initial_topic)
         buyer_brief = self._parse_buyer_first_brief(initial_topic)
         topic = buyer_brief.get("pain", initial_topic) if buyer_brief else initial_topic
+        root_topic = self._build_root_topic_seed(initial_topic=initial_topic, buyer_brief=buyer_brief, topic=topic)
         self.research_results["buyer_brief"] = buyer_brief
+        self.research_results["root_topic"] = root_topic
         consecutive_no_data = 0
 
         print(colored(f"\n{'=' * 60}", "cyan"))
@@ -137,6 +140,7 @@ class Orchestrator:
                     current_topic=topic,
                     pivot_instruction=hard_gates["pivot"],
                     topic_mode=topic_mode,
+                    root_topic=root_topic,
                 )
                 continue
 
@@ -224,7 +228,12 @@ class Orchestrator:
             if verdict == "NO GO":
                 pivot = hard_gates["pivot"] if hard_gates["blocked"] else self._extract_pivot_instruction(skeptic_output)
                 print(colored(f"\n[REJECTED] Idea rejected. Reason: {pivot}", "red"))
-                topic = self._next_topic(current_topic=topic, pivot_instruction=pivot, topic_mode=topic_mode)
+                topic = self._next_topic(
+                    current_topic=topic,
+                    pivot_instruction=pivot,
+                    topic_mode=topic_mode,
+                    root_topic=root_topic,
+                )
             else:
                 print(colored(f"[Orchestrator] Unclear verdict: {verdict}. Retrying.", "yellow"))
 
@@ -377,6 +386,15 @@ class Orchestrator:
         pain = buyer_brief.get("pain", "unknown")
         return f"buyer={buyer}; workflow={workflow}; pain={pain}"
 
+    def _build_root_topic_seed(self, initial_topic: str, buyer_brief: Optional[Dict[str, str]], topic: str) -> str:
+        if buyer_brief:
+            buyer = buyer_brief.get("buyer", "")
+            workflow = buyer_brief.get("workflow", "")
+            pain = buyer_brief.get("pain", topic)
+            seed = f"{buyer} {workflow} {pain}".strip()
+            return self._normalize_topic_phrase(seed)
+        return self._normalize_topic_phrase(initial_topic or topic)
+
     def _analyst_prompt_for_mode(self, topic_mode: str, buyer_brief: Optional[Dict[str, str]]) -> str:
         if topic_mode == "B2C_PLG":
             return (
@@ -447,32 +465,55 @@ class Orchestrator:
             return "Technical complexity too high - simplify feature set"
         return "General market/product fit issues"
 
-    def _next_topic(self, current_topic: str, pivot_instruction: str, topic_mode: Optional[str] = None) -> str:
+    def _next_topic(
+        self,
+        current_topic: str,
+        pivot_instruction: str,
+        topic_mode: Optional[str] = None,
+        root_topic: Optional[str] = None,
+    ) -> str:
         active_mode = topic_mode or self._classify_topic_mode(current_topic)["mode"]
+        base_topic = self._normalize_topic_phrase(root_topic or current_topic)
+        current_topic = self._normalize_topic_phrase(current_topic)
         lower_pivot = pivot_instruction.lower()
         if "different pain point" in lower_pivot or "saturated" in lower_pivot:
             self._domain_shift_authorized_next_iteration = True
-            return self._suggest_new_topic(current_topic)
+            candidate = self._suggest_new_topic(
+                current_topic=current_topic,
+                root_topic=base_topic,
+                topic_mode=active_mode,
+                reason="SATURATED_MARKET",
+            )
+            return self._normalize_topic_phrase(candidate)
         if "insufficient evidence" in lower_pivot or "no evidence" in lower_pivot:
             self._domain_shift_authorized_next_iteration = True
-            return self._recover_topic_after_no_data(topic=current_topic, topic_mode=active_mode)
+            recovered = self._recover_topic_after_no_data(topic=base_topic, topic_mode=active_mode)
+            return self._normalize_topic_phrase(recovered)
         if "budget owner" in lower_pivot:
             self._domain_shift_authorized_next_iteration = False
-            return f"{current_topic} for operations managers"
+            return self._merge_root_with_modifier(base_topic, "for operations managers")
         if "price point" in lower_pivot:
-            compacted = self._compact_topic_terms(current_topic)
             self._domain_shift_authorized_next_iteration = False
             if active_mode == "B2C_PLG":
-                return f"{compacted} for a narrower user segment with higher repeat usage"
-            return f"{compacted} for operations teams with budget ownership"
+                return self._merge_root_with_modifier(base_topic, "for a narrower user segment with higher repeat usage")
+            return self._merge_root_with_modifier(base_topic, "for operations teams with budget ownership")
         if "willingness" in lower_pivot and active_mode == "B2C_PLG":
-            compacted = self._compact_topic_terms(current_topic)
             self._domain_shift_authorized_next_iteration = False
-            return f"{compacted} with stronger activation and conversion hooks"
+            return self._merge_root_with_modifier(base_topic, "with stronger activation and conversion hooks")
         self._domain_shift_authorized_next_iteration = False
-        return current_topic
+        fallback = current_topic
+        if self._is_generic_pivot(fallback):
+            fallback = self._suggest_vertical_pivot(root_topic=base_topic, topic_mode=active_mode)
+        return self._normalize_topic_phrase(fallback)
 
-    def _suggest_new_topic(self, current_topic: str) -> str:
+    def _suggest_new_topic(
+        self,
+        current_topic: str,
+        root_topic: Optional[str] = None,
+        topic_mode: str = "B2B_DISCOVERY",
+        reason: str = "",
+    ) -> str:
+        base_topic = self._normalize_topic_phrase(root_topic or current_topic)
         topic_pivots = {
             "junior react developers": "senior developers managing juniors",
             "cto software agency": "small software agency operation efficiency",
@@ -482,19 +523,26 @@ class Orchestrator:
             "wellness service business operations": "clinic documentation and follow-up operations",
         }
 
-        pivot = topic_pivots.get(current_topic.lower())
-        if not pivot:
-            pivot = f"{current_topic} internal operations workflow"
-        if pivot.strip().lower() == current_topic.strip().lower():
-            pivot = f"{current_topic} compliance and documentation workflow"
+        if reason.upper() == "SATURATED_MARKET":
+            pivot = self._suggest_vertical_pivot(root_topic=base_topic, topic_mode=topic_mode)
+        else:
+            pivot = topic_pivots.get(base_topic.lower())
+            if not pivot:
+                pivot = self._merge_root_with_modifier(base_topic, "workflow bottlenecks for a specific vertical")
+
+        if self._is_generic_pivot(pivot):
+            pivot = self._suggest_vertical_pivot(root_topic=base_topic, topic_mode=topic_mode)
 
         if not self.interactive_pivots:
-            return pivot
+            return self._normalize_topic_phrase(pivot)
 
         new_topic = input(
             colored(f"\n[Orchestrator] Suggested pivot: '{pivot}'. Enter new topic or press Enter to accept: ", "yellow")
         ).strip()
-        return new_topic if new_topic else pivot
+        selected = new_topic if new_topic else pivot
+        if self._is_generic_pivot(selected):
+            selected = self._suggest_vertical_pivot(root_topic=base_topic, topic_mode=topic_mode)
+        return self._normalize_topic_phrase(selected)
 
     def _recover_topic_after_no_data(self, topic: str, topic_mode: str) -> str:
         compacted = self._compact_topic_terms(topic)
@@ -510,6 +558,103 @@ class Orchestrator:
         if recovered.lower() == topic.lower():
             recovered = f"{compacted} manual process pain points"
         return recovered
+
+    def _merge_root_with_modifier(self, root_topic: str, modifier: str) -> str:
+        compacted_root = self._compact_topic_terms(root_topic)
+        merged = f"{compacted_root} {modifier}".strip()
+        return self._normalize_topic_phrase(merged)
+
+    def _normalize_topic_phrase(self, topic: str, max_terms: int = 14) -> str:
+        raw = re.sub(r"\s+", " ", (topic or "").strip())
+        if not raw:
+            return raw
+        if (
+            re.search(r"\bbuyer\s*:", raw, flags=re.IGNORECASE)
+            and re.search(r"\bworkflow\s*:", raw, flags=re.IGNORECASE)
+            and re.search(r"\bpain\s*:", raw, flags=re.IGNORECASE)
+        ):
+            return raw
+
+        for phrase in [
+            "internal operations workflow",
+            "operations workflow pain points",
+            "compliance and documentation workflow",
+        ]:
+            pattern = rf"(?:\b{re.escape(phrase)}\b(?:\s+|$)){{2,}}"
+            raw = re.sub(pattern, f"{phrase} ", raw, flags=re.IGNORECASE).strip()
+
+        tokens = re.findall(r"[a-z0-9]+", raw.lower())
+        if not tokens:
+            return raw
+
+        filler_tokens = {"internal", "operations", "operation", "workflow", "workflows", "process", "processes"}
+        normalized_tokens: List[str] = []
+        previous = ""
+        filler_seen = set()
+        for token in tokens:
+            if token == previous:
+                continue
+            previous = token
+            if token in filler_tokens:
+                if token in filler_seen:
+                    continue
+                filler_seen.add(token)
+            normalized_tokens.append(token)
+
+        if len(normalized_tokens) > max_terms:
+            normalized_tokens = self._compact_topic_terms(" ".join(normalized_tokens), max_terms=max_terms).split()
+        return " ".join(normalized_tokens).strip()
+
+    def _is_generic_pivot(self, topic: str) -> bool:
+        lowered = (topic or "").lower()
+        generic_markers = [
+            "internal operations workflow",
+            "operations workflow operations workflow",
+            "workflow workflow",
+            "compliance and documentation workflow",
+        ]
+        if any(marker in lowered for marker in generic_markers):
+            return True
+
+        tokens = re.findall(r"[a-z0-9]+", lowered)
+        if not tokens:
+            return False
+        repetitive = len(tokens) - len(set(tokens))
+        return repetitive >= max(3, len(tokens) // 3)
+
+    def _suggest_vertical_pivot(self, root_topic: str, topic_mode: str) -> str:
+        root = self._compact_topic_terms(root_topic, max_terms=6)
+        lowered = root.lower()
+
+        if any(term in lowered for term in {"invoice", "accounts", "payable", "ap"}):
+            buyer = "operations leads at specialized service firms"
+            vertical = "construction subcontractors"
+            workflow = "invoice approval and reconciliation"
+            pain = "manual invoice matching and delayed approvals"
+        elif any(term in lowered for term in {"dental", "clinic", "inventory"}):
+            buyer = "practice managers"
+            vertical = "multi-location dental clinics"
+            workflow = "inventory reorder and stock reconciliation"
+            pain = "stockouts and manual reorder tracking"
+        elif any(term in lowered for term in {"insurance", "claim", "adjuster"}):
+            buyer = "independent insurance adjusters"
+            vertical = "property and casualty claims"
+            workflow = "claim documentation and evidence packaging"
+            pain = "fragmented evidence and repetitive claim writeups"
+        elif any(term in lowered for term in {"cpa", "tax", "accounting"}):
+            buyer = "partners at small CPA firms"
+            vertical = "tax and bookkeeping practices"
+            workflow = "client document collection and deadline follow-up"
+            pain = "missing client files and repeated reminder chasing"
+        else:
+            buyer = "operations leads"
+            vertical = "niche service businesses"
+            workflow = "recurring back-office workflow"
+            pain = f"manual steps around {root}"
+
+        if topic_mode == "B2C_PLG":
+            return f"{root} for a specific persona with explicit switching triggers"
+        return f"buyer: {buyer}; vertical: {vertical}; workflow: {workflow}; pain: {pain}"
 
     def _compact_topic_terms(self, topic: str, max_terms: int = 7) -> str:
         tokens = re.findall(r"[a-z0-9]+", (topic or "").lower())

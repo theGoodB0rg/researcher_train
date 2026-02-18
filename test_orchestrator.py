@@ -109,6 +109,43 @@ class OrchestratorHardeningTests(unittest.TestCase):
         )
         self.assertIn("budget ownership", next_topic.lower())
 
+    def test_next_topic_uses_root_topic_to_prevent_recursive_suffixes(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        next_topic = orchestrator._next_topic(
+            current_topic="invoice processing internal operations workflow internal operations workflow",
+            pivot_instruction="Low willingness to pay - raise price point for high-value customers",
+            topic_mode="B2B_STRICT",
+            root_topic="invoice processing",
+        )
+        self.assertNotIn("internal operations workflow internal operations workflow", next_topic.lower())
+        self.assertIn("invoice", next_topic.lower())
+        self.assertIn("budget ownership", next_topic.lower())
+
+    def test_saturated_market_forces_vertical_pivot_format(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        next_topic = orchestrator._next_topic(
+            current_topic="accounts payable automation",
+            pivot_instruction="Market is saturated - need different pain point",
+            topic_mode="B2B_STRICT",
+            root_topic="accounts payable automation",
+        )
+        lowered = next_topic.lower()
+        self.assertIn("buyer:", lowered)
+        self.assertIn("vertical:", lowered)
+        self.assertIn("workflow:", lowered)
+        self.assertIn("pain:", lowered)
+
+    def test_generic_internal_workflow_pivot_is_rejected(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        pivot = orchestrator._suggest_new_topic(
+            current_topic="invoice processing internal operations workflow",
+            root_topic="invoice processing",
+            topic_mode="B2B_STRICT",
+            reason="SATURATED_MARKET",
+        )
+        self.assertNotIn("internal operations workflow", pivot.lower())
+        self.assertIn("vertical:", pivot.lower())
+
     def test_b2c_hard_gates_allow_realistic_plg_plan(self):
         orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
         gates = orchestrator._evaluate_hard_gates(

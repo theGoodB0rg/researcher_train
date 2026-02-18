@@ -43,6 +43,7 @@ class WillingnessToPayValidatorAgent(Agent):
         competitor_prices = self._extract_competitor_prices(competitor_text)
         competitor_anchor = self._price_anchor(competitor_prices)
         pricing_fit = self._score_pricing_fit(pricing.get("monthly_price"), competitor_anchor)
+        market_proof = self._score_market_proof(competitor_prices, competitor_text)
 
         budget_fit = self._score_budget_fit(strategist_text)
         inaction_score = self._score_cost_of_inaction(pain_text)
@@ -51,15 +52,19 @@ class WillingnessToPayValidatorAgent(Agent):
         composite_score = self._composite_score(
             direct_score=direct_score,
             pricing_fit=pricing_fit,
+            market_proof=market_proof,
             budget_fit=budget_fit,
             inaction_score=inaction_score,
             substitution_penalty=substitution_penalty,
+            has_direct_signals=bool(direct_signals),
+            competitor_anchor=competitor_anchor,
         )
 
-        recommendation = self._recommendation_from_score(composite_score, direct_signals)
+        recommendation = self._recommendation_from_score(composite_score, direct_signals, market_proof)
         confidence = self._confidence(
             direct_signals=direct_signals,
             competitor_anchor=competitor_anchor,
+            market_proof=market_proof,
             strategist_text=strategist_text,
         )
 
@@ -70,6 +75,7 @@ class WillingnessToPayValidatorAgent(Agent):
             proposed_price=pricing.get("monthly_price"),
             competitor_anchor=competitor_anchor,
             pricing_fit=pricing_fit,
+            market_proof=market_proof,
             budget_fit=budget_fit,
             inaction_score=inaction_score,
             substitution_penalty=substitution_penalty,
@@ -165,22 +171,54 @@ class WillingnessToPayValidatorAgent(Agent):
         if proposed_monthly is None:
             return 30.0
         if anchor_monthly is None:
-            if proposed_monthly <= 500:
+            if proposed_monthly <= 80:
+                return 55.0
+            if proposed_monthly <= 250:
+                return 70.0
+            if proposed_monthly <= 600:
                 return 60.0
             if proposed_monthly <= 1200:
-                return 45.0
-            return 30.0
+                return 40.0
+            return 20.0
 
         ratio = proposed_monthly / max(1.0, anchor_monthly)
-        if ratio <= 1.3:
-            return 82.0
+        if ratio <= 1.1:
+            return 92.0
+        if ratio <= 1.5:
+            return 85.0
         if ratio <= 2.0:
-            return 70.0
-        if ratio <= 4.0:
-            return 50.0
+            return 74.0
+        if ratio <= 3.0:
+            return 58.0
+        if ratio <= 5.0:
+            return 40.0
         if ratio <= 8.0:
-            return 35.0
-        return 20.0
+            return 24.0
+        return 10.0
+
+    def _score_market_proof(self, competitor_prices: List[float], competitor_text: str) -> float:
+        if not competitor_prices:
+            return 30.0
+
+        saturation = self._extract_market_saturation(competitor_text)
+        base = min(90.0, 55.0 + (8.0 * len(competitor_prices)))
+        if saturation == "RED":
+            base -= 10.0
+        elif saturation == "YELLOW":
+            base += 2.0
+        elif saturation == "GREEN":
+            base += 8.0
+        return max(20.0, min(95.0, base))
+
+    def _extract_market_saturation(self, text: str) -> str:
+        upper = (text or "").upper()
+        if "GREEN" in upper:
+            return "GREEN"
+        if "YELLOW" in upper:
+            return "YELLOW"
+        if "RED" in upper:
+            return "RED"
+        return "UNKNOWN"
 
     def _score_budget_fit(self, strategist_text: str) -> float:
         text = strategist_text.lower()
@@ -236,34 +274,81 @@ class WillingnessToPayValidatorAgent(Agent):
         self,
         direct_score: float,
         pricing_fit: float,
+        market_proof: float,
         budget_fit: float,
         inaction_score: float,
         substitution_penalty: float,
+        has_direct_signals: bool,
+        competitor_anchor: Optional[float],
     ) -> float:
+        if has_direct_signals:
+            weights = {
+                "direct": 0.20,
+                "pricing": 0.25,
+                "market": 0.20,
+                "budget": 0.15,
+                "inaction": 0.15,
+                "substitution": 0.05,
+            }
+        elif competitor_anchor is not None or market_proof >= 65.0:
+            # Avoid over-penalizing the common "no quote" case when real market pricing exists.
+            weights = {
+                "direct": 0.05,
+                "pricing": 0.30,
+                "market": 0.30,
+                "budget": 0.15,
+                "inaction": 0.15,
+                "substitution": 0.05,
+            }
+        else:
+            weights = {
+                "direct": 0.15,
+                "pricing": 0.25,
+                "market": 0.20,
+                "budget": 0.15,
+                "inaction": 0.20,
+                "substitution": 0.05,
+            }
+
         base = (
-            (0.25 * direct_score)
-            + (0.25 * pricing_fit)
-            + (0.20 * budget_fit)
-            + (0.20 * inaction_score)
-            + (0.10 * (100.0 - substitution_penalty))
+            (weights["direct"] * direct_score)
+            + (weights["pricing"] * pricing_fit)
+            + (weights["market"] * market_proof)
+            + (weights["budget"] * budget_fit)
+            + (weights["inaction"] * inaction_score)
+            + (weights["substitution"] * (100.0 - substitution_penalty))
         )
+
+        # Explicit anchors widen score spread to avoid constant-midband outcomes.
+        if market_proof >= 80.0 and pricing_fit >= 80.0 and budget_fit >= 68.0 and inaction_score >= 50.0:
+            base = max(base, 72.0)
+        if pricing_fit <= 20.0 and market_proof <= 40.0 and substitution_penalty >= 12.0:
+            base = min(base, 35.0)
         return max(0.0, min(100.0, base))
 
-    def _recommendation_from_score(self, score: float, signals: List[str]) -> str:
-        if not signals and score < 45:
+    def _recommendation_from_score(self, score: float, signals: List[str], market_proof: float) -> str:
+        if not signals and market_proof < 45.0 and score < 55.0:
             return "NO SIGNAL"
-        if score >= 70:
+        if score >= 72:
             return "STRONG SIGNAL"
-        if score >= 45:
+        if score >= 50:
             return "WEAK SIGNAL"
         return "NO SIGNAL"
 
-    def _confidence(self, direct_signals: List[str], competitor_anchor: Optional[float], strategist_text: str) -> float:
+    def _confidence(
+        self,
+        direct_signals: List[str],
+        competitor_anchor: Optional[float],
+        market_proof: float,
+        strategist_text: str,
+    ) -> float:
         confidence = 45.0
         if direct_signals:
             confidence += 15.0
         if competitor_anchor is not None:
             confidence += 20.0
+        if market_proof >= 75.0:
+            confidence += 10.0
         if "budget owner" in strategist_text.lower():
             confidence += 10.0
         return max(30.0, min(95.0, confidence))
@@ -276,6 +361,7 @@ class WillingnessToPayValidatorAgent(Agent):
         proposed_price: Optional[float],
         competitor_anchor: Optional[float],
         pricing_fit: float,
+        market_proof: float,
         budget_fit: float,
         inaction_score: float,
         substitution_penalty: float,
@@ -305,6 +391,7 @@ class WillingnessToPayValidatorAgent(Agent):
                     "   - Competitor monthly anchor: Unavailable"
                 ),
                 f"   - Pricing fit score: {pricing_fit:.0f}/100",
+                f"   - Market proof score: {market_proof:.0f}/100",
                 f"   - Buyer budget fit score: {budget_fit:.0f}/100",
                 f"   - Cost-of-inaction score: {inaction_score:.0f}/100",
                 f"   - Substitution pressure penalty: {substitution_penalty:.0f}/24",
