@@ -26,9 +26,19 @@ class ScoutAgent(Agent):
             # FAIL LOUDLY - no synthetic data fallback
             error_msg = collection_result.get("error", "Unknown error")
             print(colored(f"[Scout] DATA COLLECTION FAILED: {error_msg}", "red"))
-            print(colored(f"[Scout] System cannot proceed without real data. Please check:", "red"))
-            print(colored(f"  - Reddit API credentials (REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET)", "red"))
-            print(colored(f"  - Internet connection for HackerNews and DuckDuckGo", "red"))
+            print(colored(f"[Scout] Source diagnostics:", "red"))
+            diagnostics = collection_result.get("source_diagnostics", {})
+            for source_type, diag in diagnostics.items():
+                attempted_count = len(diag.get("attempted_queries", []))
+                print(
+                    colored(
+                        f"  - {diag.get('provider', source_type)} [{source_type}] "
+                        f"status={diag.get('status')} results={diag.get('results')} attempts={attempted_count}",
+                        "red",
+                    )
+                )
+                if diag.get("error"):
+                    print(colored(f"    error={diag.get('error')}", "red"))
             
             # Pass failure to LLM so it understands the situation
             formatted_data = f"DATA COLLECTION FAILED: {error_msg}\n\nThe research system could not retrieve real data from Reddit, HackerNews, or DuckDuckGo.\nWithout real data, this research round cannot proceed.\nPlease resolve the data collection issue and try again."

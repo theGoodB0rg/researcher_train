@@ -26,6 +26,7 @@ class Settings:
     max_iterations: int
     require_real_data: bool
     allow_mock_data: bool
+    enable_reddit_source: bool
     source_timeout_sec: int
 
 
@@ -37,5 +38,6 @@ def get_settings() -> Settings:
         max_iterations=_parse_int(os.getenv("MAX_ITERATIONS"), 5),
         require_real_data=_parse_bool(os.getenv("REQUIRE_REAL_DATA"), True),
         allow_mock_data=_parse_bool(os.getenv("ALLOW_MOCK_DATA"), False),
+        enable_reddit_source=_parse_bool(os.getenv("ENABLE_REDDIT_SOURCE"), False),
         source_timeout_sec=_parse_int(os.getenv("SOURCE_TIMEOUT_SEC"), 8),
     )

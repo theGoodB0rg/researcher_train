@@ -61,9 +61,10 @@ The system operates as a sequential pipeline of four distinct AI personas, each 
     MAX_ITERATIONS=5
     REQUIRE_REAL_DATA=true
     ALLOW_MOCK_DATA=false
+    ENABLE_REDDIT_SOURCE=false
     ```
 
-    *Note: Reddit credentials are optional but recommended for stronger community-signal quality.*
+    *Note: Set `ENABLE_REDDIT_SOURCE=true` only if you have working Reddit credentials.*
 
 ## Usage
 

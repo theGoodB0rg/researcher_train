@@ -21,7 +21,8 @@ OPENAI_MODEL=gpt-4o
 MAX_ITERATIONS=5
 REQUIRE_REAL_DATA=true
 ALLOW_MOCK_DATA=false
-REDDIT_CLIENT_ID=...        # Optional (Reddit source is skipped if unset)
+ENABLE_REDDIT_SOURCE=false
+REDDIT_CLIENT_ID=...        # Optional (used only when ENABLE_REDDIT_SOURCE=true)
 REDDIT_CLIENT_SECRET=...
 REDDIT_USER_AGENT=researcher_v2
 ```
@@ -129,6 +130,7 @@ All data is real or "fails loudly" by default:
 - ✓ Reddit posts with engagement (when credentials are present)
 - ✓ HackerNews stories via Algolia API
 - ✓ Web search results with URLs and timestamps
+- ✓ Per-source diagnostics (queries attempted, result counts, errors)
 - ✗ NO synthetic fallback unless `ALLOW_MOCK_DATA=true`
 
 ## Customization
@@ -167,10 +169,10 @@ Your customized instructions...
 ### No Real Data Found
 **Symptom**: "Scout failed to collect real data. Iteration abandoned."
 
-**Why**: Reddit API authentication failed (401), HackerNews returned no results, DuckDuckGo has rate limit
+**Why**: Sources returned no valid records (or strict real-data mode rejected mixed-quality coverage)
 
 **Fix**: 
-- Add valid Reddit credentials to `.env`
+- Ensure `ENABLE_REDDIT_SOURCE=false` if you are not using Reddit credentials
 - Try different search topic
 - Wait before retrying (rate limits)
 
