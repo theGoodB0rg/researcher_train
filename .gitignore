@@ -1,40 +1,71 @@
-# Python
+# Python bytecode and caches
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build and packaging artifacts
 .Python
 build/
-develop-eggs/
 dist/
+sdist/
+site/
 downloads/
+develop-eggs/
 eggs/
 .eggs/
+wheels/
+parts/
+var/
 lib/
 lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
+.installed.cfg
 MANIFEST
+pip-wheel-metadata/
 
-# Virtual Environments
+# Virtual environments
 venv/
 env/
 ENV/
-.env
 .venv/
 
-# Environment Variables
+# Environment and local config
 .env
+.env.*
+!.env.example
 
-# IDEs
+# Logs and local runtime files
+*.log
+*.pid
+*.out
+*.err
+
+# Project outputs and local data artifacts
+research_results_*.json
+test_results.json
+*.sqlite3
+*.db
+
+# IDE/editor
 .vscode/
 .idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.swp
+*.swo
+*~
 
-# OS
+# OS junk
 .DS_Store
 Thumbs.db
+Desktop.ini

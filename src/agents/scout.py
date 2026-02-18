@@ -1,41 +1,42 @@
 from termcolor import colored
 from src.core.agent import Agent
-from src.utils.search_client import SearchClient
+from src.utils.data_collector import DataCollector
 from typing import List, Dict
 
 class ScoutAgent(Agent):
     def __init__(self, name: str, role: str, system_prompt: str, color: str = "cyan"):
         super().__init__(name, role, system_prompt, color)
-        self.search_client = SearchClient()
+        self.data_collector = DataCollector()
 
     def process(self, input_data: str, context: List[Dict[str, str]] = None) -> str:
         # Extract the core topic from the input
         # "Find complaints and issues related to: dental practice" -> "dental practice"
         topic = input_data.replace("Find complaints and issues related to:", "").strip()
         
-        # Formulate a better search query for complaints
-        # We can do multiple searches if needed, but let's start with one.
-        search_query = f"{topic} complaints site:reddit.com OR site:quora.com OR site:news.ycombinator.com"
+        # Collect data from real sources (Reddit, HackerNews, Web)
+        print(f"[Scout] Collecting real data for: {topic}")
+        collection_result = self.data_collector.collect(
+            query=f"{topic} problems complaints issues",
+            topic=topic,
+            limit=15
+        )
         
-        # Fetch data
-        print(f"[Scout] Searching for: {search_query}")
-        results = self.search_client.search(search_query, limit=10)
-        
-        # Fallback if no results with strict site operators
-        if not results:
-            print(colored("[Scout] Strict search failed. Trying broader search...", "yellow"))
-            broader_query = f"{topic} complaints problems reddit quora"
-            results = self.search_client.search(broader_query, limit=10)
-
-        # Format data
-        if not results:
-             formatted_data = "No specific search results found. Please rely on your internal knowledge."
+        # Check data quality
+        if collection_result.get("data_quality") == "none":
+            # FAIL LOUDLY - no synthetic data fallback
+            error_msg = collection_result.get("error", "Unknown error")
+            print(colored(f"[Scout] DATA COLLECTION FAILED: {error_msg}", "red"))
+            print(colored(f"[Scout] System cannot proceed without real data. Please check:", "red"))
+            print(colored(f"  - Reddit API credentials (REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET)", "red"))
+            print(colored(f"  - Internet connection for HackerNews and DuckDuckGo", "red"))
+            
+            # Pass failure to LLM so it understands the situation
+            formatted_data = f"DATA COLLECTION FAILED: {error_msg}\n\nThe research system could not retrieve real data from Reddit, HackerNews, or DuckDuckGo.\nWithout real data, this research round cannot proceed.\nPlease resolve the data collection issue and try again."
         else:
-            formatted_data = "Here are search results for potential problems:\n"
-            for i, res in enumerate(results):
-                formatted_data += f"{i+1}. [{res['source']}] {res['title']}\n   Snippet: {res['text']}\n   URL: {res['url']}\n\n"
+            # Format real data for LLM
+            formatted_data = self.data_collector.format_for_prompt(collection_result)
 
         # Inject into prompt
-        enriched_input = f"{input_data}\n\n[SEARCH DATA START]\n{formatted_data}\n[SEARCH DATA END]\n\nAnalyze this data according to your system prompt."
+        enriched_input = f"{input_data}\n\n[DATA START]\n{formatted_data}\n[DATA END]\n\nAnalyze this data according to your system prompt."
         
         return super().process(enriched_input, context)
