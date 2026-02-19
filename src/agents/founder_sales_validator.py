@@ -2,7 +2,7 @@
 FounderSalesValidator Agent: Validates if founders can reach $5k MRR via direct sales.
 Calculates realistic adoption paths given zero marketing budget.
 """
-from termcolor import colored
+from src.utils.console import colored
 from src.core.agent import Agent
 from typing import List, Dict
 from datetime import datetime
@@ -228,3 +228,4 @@ SALES SCENARIOS & CALCULATIONS:
         output += f"\nSimulation Date: {simulation['researched_at']}\n"
         
         return output
+

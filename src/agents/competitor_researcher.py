@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from termcolor import colored
+from src.utils.console import colored
 
 from src.core.agent import Agent
 from src.utils.search_client import SearchClient
@@ -26,6 +26,21 @@ class CompetitorResearcherAgent(Agent):
             "x.com",
             "twitter.com",
             "github.com",
+            "wikipedia.org",
+            "sourceforge.net",
+            "metapress.com",
+            "topbusinesssoftware.com",
+            "saasbrowser.com",
+            "blogspot.com",
+        }
+        self.listicle_markers = {
+            "best",
+            "top",
+            "alternatives",
+            "comparison",
+            "compare",
+            "vs",
+            "list",
         }
 
     def process(self, input_data: str, context: Optional[List[Dict[str, str]]] = None) -> str:
@@ -54,29 +69,34 @@ class CompetitorResearcherAgent(Agent):
                 return pitch, text[:1000]
         return None, None
 
-    def _search_competitors(self, idea_name: str, description: Optional[str]) -> List[Dict[str, str]]:
+    def _search_competitors(self, idea_name: str, description: Optional[str]) -> List[Dict[str, object]]:
         search_seed = self._build_search_seed(idea_name, description)
+        seed_keywords = set(re.findall(r"[a-z0-9]+", search_seed.lower()))
         queries = [
-            f"{search_seed} software",
-            f"{search_seed} SaaS",
-            f"{search_seed} tool",
+            f"{search_seed} app",
+            f"{search_seed} software platform",
+            f"{search_seed} competitor",
             f"{search_seed} alternative",
         ]
 
-        collected: Dict[str, Dict[str, str]] = {}
+        collected: Dict[str, Dict[str, object]] = {}
         for query in queries:
             results = self.search_client.search(query, limit=8)
             for result in results:
-                parsed = self._candidate_from_result(result)
+                parsed = self._candidate_from_result(result, seed_keywords=seed_keywords)
                 if not parsed:
                     continue
                 domain = parsed["domain"]
                 if domain in collected:
-                    collected[domain]["evidence_count"] = str(int(collected[domain]["evidence_count"]) + 1)
+                    collected[domain]["evidence_count"] = int(collected[domain]["evidence_count"]) + 1
                 else:
                     collected[domain] = parsed
 
-        competitors = sorted(collected.values(), key=lambda item: int(item["evidence_count"]), reverse=True)
+        competitors = sorted(
+            collected.values(),
+            key=lambda item: (int(item.get("evidence_count", 0)), int(item.get("keyword_overlap", 0))),
+            reverse=True,
+        )
         return competitors[:12]
 
     def _build_search_seed(self, idea_name: str, description: Optional[str]) -> str:
@@ -117,9 +137,14 @@ class CompetitorResearcherAgent(Agent):
         seed = " ".join(keywords[:6]).strip()
         return seed or idea_name
 
-    def _candidate_from_result(self, result: Dict[str, str]) -> Optional[Dict[str, str]]:
+    def _candidate_from_result(
+        self,
+        result: Dict[str, str],
+        seed_keywords: Optional[set] = None,
+    ) -> Optional[Dict[str, object]]:
         url = (result.get("url") or "").strip()
         title = (result.get("title") or "").strip()
+        snippet = (result.get("text") or "").strip()
         if not url or not title:
             return None
 
@@ -127,31 +152,56 @@ class CompetitorResearcherAgent(Agent):
         if not domain or domain in self.excluded_domains:
             return None
 
-        name = re.split(r"[-|:]", title)[0].strip()
-        if len(name) < 2:
+        lowered = f"{title} {snippet} {url}".lower()
+        url_path = (urlparse(url).path or "").lower()
+        if any(marker in lowered for marker in {"directory", "listicle", "roundup"}):
             return None
+        if any(marker in lowered for marker in self.listicle_markers) and (
+            "/blog/" in url_path or "/articles/" in url_path
+        ):
+            return None
+
+        if seed_keywords:
+            overlap = sum(1 for keyword in seed_keywords if len(keyword) > 3 and keyword in lowered)
+            min_overlap = 1 if len(seed_keywords) >= 3 else 0
+            if overlap < min_overlap:
+                return None
+        else:
+            overlap = 0
+
+        name = re.split(r"[-|:]", title)[0].strip()
+        if len(name) < 2 or name.lower() in self.listicle_markers:
+            name = domain.split(".")[0]
 
         return {
             "name": name,
             "domain": domain,
             "url": url,
-            "evidence_count": "1",
+            "evidence_count": 1,
+            "keyword_overlap": overlap,
         }
 
-    def _build_findings(self, idea_name: str, competitors: List[Dict[str, str]]) -> Dict[str, object]:
+    def _build_findings(self, idea_name: str, competitors: List[Dict[str, object]]) -> Dict[str, object]:
+        strong_competitors = [item for item in competitors if int(item.get("evidence_count", 0)) >= 2]
         competitor_count = len(competitors)
+        strong_count = len(strong_competitors)
+
         if competitor_count == 0:
             market_saturation = "GREEN - No direct competitors found in search evidence"
             recommendation = "Proceed, but validate demand directly with interviews."
             confidence = 0.45
-        elif competitor_count <= 4:
+        elif strong_count >= 5 or competitor_count >= 8:
+            market_saturation = "RED - Crowded landscape"
+            recommendation = "Pivot positioning or customer segment before building."
+            confidence = 0.82
+        elif competitor_count <= 6:
             market_saturation = "YELLOW - Low to moderate competition"
             recommendation = "Proceed with clear differentiation and niche focus."
             confidence = 0.75
         else:
-            market_saturation = "RED - Crowded landscape"
-            recommendation = "Pivot positioning or customer segment before building."
-            confidence = 0.85
+            market_saturation = "YELLOW - Moderate competition"
+            recommendation = "Proceed only with clear wedge and measurable user pull."
+            confidence = 0.78
 
         return {
             "idea": idea_name,
@@ -163,7 +213,7 @@ class CompetitorResearcherAgent(Agent):
         }
 
     def _format_findings(self, findings: Dict[str, object]) -> str:
-        competitors: List[Dict[str, str]] = findings.get("competitors", [])  # type: ignore[assignment]
+        competitors: List[Dict[str, object]] = findings.get("competitors", [])  # type: ignore[assignment]
         output = (
             "COMPETITOR ANALYSIS REPORT\n"
             "==========================\n"
@@ -188,6 +238,18 @@ class CompetitorResearcherAgent(Agent):
         return output
 
     def _extract_pitch(self, text: str) -> Optional[str]:
+        section_match = re.search(
+            r"the pitch[^\n]*\n(?P<body>(?:.+\n){0,4})",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if section_match:
+            body_lines = [line.strip() for line in section_match.group("body").splitlines() if line.strip()]
+            for line in body_lines:
+                candidate = self._clean_candidate(line)
+                if candidate:
+                    return candidate
+
         explicit_match = re.search(
             r"(?:^|\n)\s*(?:\*+)?(?:\d+\.\s*)?the pitch(?:\*+)?\s*:\s*(.+)",
             text,
@@ -206,6 +268,12 @@ class CompetitorResearcherAgent(Agent):
                 candidate = self._clean_candidate(next_line)
                 if candidate:
                     return candidate
+
+        quoted_match = re.search(r"['\"]([^'\"]{12,180})['\"]", text)
+        if quoted_match:
+            candidate = self._clean_candidate(quoted_match.group(1))
+            if candidate:
+                return candidate
 
         for line in lines:
             candidate = self._clean_candidate(line)
@@ -231,3 +299,4 @@ class CompetitorResearcherAgent(Agent):
     def speak_and_return(self, message: str) -> str:
         self.speak(message)
         return message
+

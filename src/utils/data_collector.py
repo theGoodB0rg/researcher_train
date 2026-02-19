@@ -9,7 +9,7 @@ from collections import Counter
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
-from termcolor import colored
+from src.utils.console import colored
 
 from src.config import get_settings
 from src.sources import HackerNewsSource, RedditSource, SourceProvider, WebSource
@@ -37,6 +37,7 @@ class DataCollector:
         limit: int = 15,
         min_quality_threshold: Optional[float] = None,
         source_query_overrides: Optional[Dict[str, List[str]]] = None,
+        mode_hint: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Collect real data from all configured providers with source provenance and diagnostics.
@@ -121,6 +122,7 @@ class DataCollector:
             deduped,
             topic=topic,
             min_quality_threshold=min_quality_threshold,
+            mode_hint=mode_hint,
         )
 
         by_source_quality = quality_summary.get("by_source", {})
@@ -149,6 +151,21 @@ class DataCollector:
                 quality_summary=quality_summary,
             )
 
+        if (mode_hint or "").upper() == "B2C_PLG":
+            b2c_evidence = self._summarize_b2c_user_evidence(quality_filtered)
+            quality_summary["b2c_user_evidence"] = b2c_evidence
+            if not b2c_evidence["passes"]:
+                return self._no_data_response(
+                    topic=topic,
+                    query=query,
+                    reason=(
+                        "Insufficient first-person/user-generated evidence for B2C research mode "
+                        "(need community/review sources or multiple first-person signals)"
+                    ),
+                    diagnostics=source_diagnostics,
+                    quality_summary=quality_summary,
+                )
+
         source_breakdown = self._compute_source_breakdown(quality_filtered)
         confidence = self._compute_confidence(
             accepted_results=quality_filtered,
@@ -156,10 +173,15 @@ class DataCollector:
             per_source_limit=per_source_limit,
         )
 
+        min_records_for_single_source = 2 if (mode_hint or "").upper() == "B2C_PLG" else 3
         strong_single_source_evidence = (
-            quality_summary.get("accepted_count", 0) >= 3
+            quality_summary.get("accepted_count", 0) >= min_records_for_single_source
             and quality_summary.get("avg_quality_score_accepted", 0.0) >= quality_summary["threshold"]
         )
+        if (mode_hint or "").upper() == "B2C_PLG":
+            strong_single_source_evidence = strong_single_source_evidence and bool(
+                quality_summary.get("b2c_user_evidence", {}).get("passes")
+            )
         quality_summary["strong_single_source_evidence"] = strong_single_source_evidence
 
         quality = "real" if (confidence >= 0.5 or strong_single_source_evidence) else "mixed"
@@ -204,6 +226,15 @@ class DataCollector:
                     f"dropped={quality_summary.get('dropped_count', 0)} "
                     f"threshold={quality_summary.get('threshold', 0.0):.2f}"
                 )
+                b2c_signals = quality_summary.get("b2c_user_evidence")
+                if b2c_signals:
+                    lines.append(
+                        "B2C User Evidence: "
+                        f"discussion={b2c_signals.get('discussion_sources', 0)} "
+                        f"review={b2c_signals.get('review_sources', 0)} "
+                        f"first_person={b2c_signals.get('first_person_signals', 0)} "
+                        f"passes={b2c_signals.get('passes', False)}"
+                    )
             lines.append("Diagnostics:")
             for source_type, diag in diagnostics.items():
                 lines.append(
@@ -237,6 +268,15 @@ class DataCollector:
             ),
             "Diagnostics:",
         ]
+        b2c_signals = quality_summary.get("b2c_user_evidence")
+        if b2c_signals:
+            output.append(
+                "B2C User Evidence: "
+                f"discussion={b2c_signals.get('discussion_sources', 0)} "
+                f"review={b2c_signals.get('review_sources', 0)} "
+                f"first_person={b2c_signals.get('first_person_signals', 0)} "
+                f"passes={b2c_signals.get('passes', False)}"
+            )
 
         for source_type, diag in diagnostics.items():
             output.append(
@@ -382,6 +422,7 @@ class DataCollector:
         results: List[Dict[str, Any]],
         topic: str,
         min_quality_threshold: Optional[float] = None,
+        mode_hint: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         configured_threshold = self.settings.min_record_quality_score if min_quality_threshold is None else min_quality_threshold
         threshold = max(0.0, min(1.0, configured_threshold))
@@ -406,7 +447,7 @@ class DataCollector:
                 },
             )
 
-            score, notes = self._score_record(record, topic_terms)
+            score, notes = self._score_record(record, topic_terms, mode_hint=mode_hint)
             stats["raw_records"] += 1
             stats["quality_sum"] += score
             total_quality += score
@@ -464,15 +505,23 @@ class DataCollector:
         ordered = sorted(reason_counter.items(), key=lambda item: (-item[1], item[0]))
         return {reason: int(count) for reason, count in ordered[:limit]}
 
-    def _score_record(self, record: Dict[str, Any], topic_terms: Set[str]) -> Tuple[float, List[str]]:
+    def _score_record(
+        self,
+        record: Dict[str, Any],
+        topic_terms: Set[str],
+        mode_hint: Optional[str] = None,
+    ) -> Tuple[float, List[str]]:
         source_type = str(record.get("source_type", "unknown")).lower()
         title = str(record.get("title", "") or "")
         text = str(record.get("text", "") or "")
         url = str(record.get("url", "") or "")
         domain = self._domain_from_url(url)
+        parsed_url = urlparse(url or "")
+        path = (parsed_url.path or "").lower()
+        mode = (mode_hint or "").upper()
 
         notes: List[str] = []
-        score = {"reddit": 0.82, "hackernews": 0.76, "web": 0.48}.get(source_type, 0.4)
+        score = {"reddit": 0.82, "hackernews": 0.76, "web": 0.42}.get(source_type, 0.4)
 
         full_text = f"{title} {text} {url}".lower()
         text_tokens = set(re.findall(r"[a-z0-9]+", full_text))
@@ -516,9 +565,30 @@ class DataCollector:
             "indiehackers.com",
             "quora.com",
         }
+        is_forum_domain = (
+            domain in community_domains
+            or domain.startswith("community.")
+            or domain.startswith("forums.")
+            or ".forum" in domain
+            or "forum" in domain
+        )
         if domain in community_domains:
             score += 0.12
             notes.append("community_source")
+        if source_type == "web" and is_forum_domain:
+            score += 0.12
+            notes.append("user_discussion_source")
+
+        review_domains = {
+            "apps.apple.com",
+            "play.google.com",
+            "trustpilot.com",
+            "g2.com",
+            "capterra.com",
+        }
+        if source_type == "web" and domain in review_domains:
+            score += 0.1
+            notes.append("review_source")
 
         if domain.endswith(".gov") or domain.endswith(".edu") or ".gov." in domain or ".edu." in domain:
             score += 0.1
@@ -536,6 +606,20 @@ class DataCollector:
             score -= 0.25
             notes.append("reference_dictionary_source")
 
+        listicle_indicators = [
+            " best ",
+            " top ",
+            " alternatives",
+            " comparison",
+            " versus ",
+            " vs ",
+            " list of ",
+            " software list",
+        ]
+        if source_type == "web" and any(indicator in f" {full_text} " for indicator in listicle_indicators):
+            score -= 0.12
+            notes.append("listicle_roundup")
+
         promo_indicators = [
             "pricing",
             "book a demo",
@@ -545,13 +629,33 @@ class DataCollector:
             "features",
             "our platform",
             "solutions",
+            "contact us",
+            "sales team",
             "/product",
             "/pricing",
+            "/solutions",
+            "/services",
         ]
         promo_hits = sum(1 for indicator in promo_indicators if indicator in full_text)
         if promo_hits >= 2:
-            score -= min(0.2, promo_hits * 0.05)
+            score -= min(0.32, promo_hits * 0.06)
             notes.append("promotional_content")
+        if source_type == "web" and "/blog" in path and pain_hits == 0:
+            score -= 0.07
+            notes.append("vendor_blog_content")
+
+        first_person_tokens = [" i ", " i'm ", " i've ", " my ", " me ", " we ", " our ", " us "]
+        person_text = f" {title.lower()} {text.lower()} "
+        if any(token in person_text for token in first_person_tokens):
+            score += 0.08
+            notes.append("first_person_signal")
+        elif source_type == "web":
+            score -= 0.04
+            notes.append("no_first_person_signal")
+
+        if mode == "B2C_PLG" and source_type == "web" and not (is_forum_domain or domain in review_domains):
+            score -= 0.08
+            notes.append("non_user_generated_web_source")
 
         engagement = self._to_int(record.get("score"))
         if engagement is not None:
@@ -579,7 +683,27 @@ class DataCollector:
         score = max(0.0, min(1.0, score))
         if not notes:
             notes.append("neutral_signal")
-        return score, notes[:5]
+        return score, notes[:8]
+
+    def _summarize_b2c_user_evidence(self, accepted_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        discussion_sources = 0
+        first_person_signals = 0
+        review_sources = 0
+        for result in accepted_results:
+            notes = {str(note) for note in result.get("quality_notes", [])}
+            if "user_discussion_source" in notes or "community_source" in notes:
+                discussion_sources += 1
+            if "first_person_signal" in notes:
+                first_person_signals += 1
+            if "review_source" in notes:
+                review_sources += 1
+        passes = discussion_sources >= 1 or review_sources >= 1 or first_person_signals >= 2
+        return {
+            "discussion_sources": discussion_sources,
+            "review_sources": review_sources,
+            "first_person_signals": first_person_signals,
+            "passes": passes,
+        }
 
     def _topic_terms(self, topic: str) -> Set[str]:
         stop_words = {
@@ -666,3 +790,4 @@ class DataCollector:
             "data_quality": "none",
             "error": message,
         }
+

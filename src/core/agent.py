@@ -1,6 +1,6 @@
 from typing import List, Dict, Any
 from openai import OpenAI
-from termcolor import colored
+from src.utils.console import colored
 from src.config import get_settings
 
 class Agent:
@@ -57,3 +57,4 @@ class Agent:
 
         self.speak(reply)
         return reply
+

@@ -1,4 +1,4 @@
-from termcolor import colored
+from src.utils.console import colored
 from src.core.agent import Agent
 from src.utils.data_collector import DataCollector
 from typing import List, Dict, Any
@@ -215,6 +215,7 @@ class ScoutAgent(Agent):
                 limit=15,
                 min_quality_threshold=strategy["threshold"],
                 source_query_overrides=strategy.get("source_query_overrides"),
+                mode_hint=research_mode,
             )
             fallback_result = result
 
@@ -234,7 +235,7 @@ class ScoutAgent(Agent):
             return [
                 {
                     "label": "user_frustrations",
-                    "query": f"{query_seed} problems complaints issues",
+                    "query": f"{query_seed} user complaints frustrations reddit forum",
                     "threshold": None,
                     "source_query_overrides": {
                         "hackernews": [
@@ -243,10 +244,11 @@ class ScoutAgent(Agent):
                             f"{query_seed} frustrations",
                         ],
                         "web": [
-                            f"{query_seed} user complaints",
-                            f"{query_seed} alternatives comparison",
-                            f"{query_seed} churn reasons",
-                            f"{query_seed} annoying workflow",
+                            f'site:reddit.com {query_seed} "frustrated"',
+                            f'site:reddit.com {query_seed} "anyone else"',
+                            f'site:quora.com {query_seed} problem',
+                            f"{query_seed} app store reviews",
+                            f"{query_seed} trustpilot reviews",
                         ],
                     },
                 },
@@ -257,8 +259,9 @@ class ScoutAgent(Agent):
                     "source_query_overrides": {
                         "hackernews": [f"{query_seed} ask hn feature request"],
                         "web": [
-                            f"{query_seed} feature request",
-                            f"{query_seed} missing features",
+                            f'site:reddit.com {query_seed} "feature request"',
+                            f'site:reddit.com {query_seed} "missing feature"',
+                            f"{query_seed} review missing features",
                             f"{query_seed} workaround",
                         ],
                     },
@@ -270,7 +273,8 @@ class ScoutAgent(Agent):
                     "source_query_overrides": {
                         "hackernews": [f"{query_seed} ask hn switched"],
                         "web": [
-                            f"{query_seed} switched from",
+                            f'site:reddit.com {query_seed} "switched from"',
+                            f'{query_seed} "switched to" "because"',
                             f"{query_seed} alternative to",
                             f"{query_seed} better than",
                         ],
@@ -327,3 +331,4 @@ class ScoutAgent(Agent):
                 },
             },
         ]
+

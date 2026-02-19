@@ -7,7 +7,7 @@ from datetime import datetime
 from statistics import median
 from typing import Dict, List, Optional
 
-from termcolor import colored
+from src.utils.console import colored
 
 from src.core.agent import Agent
 
@@ -433,3 +433,4 @@ class WillingnessToPayValidatorAgent(Agent):
             ]
         )
         return "\n".join(lines)
+

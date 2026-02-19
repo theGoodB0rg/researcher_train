@@ -1,7 +1,7 @@
 import os
 import praw
 from typing import List, Dict
-from termcolor import colored
+from src.utils.console import colored
 
 from src.config import get_settings
 
@@ -86,3 +86,4 @@ class RedditClient:
                 "subreddit": "restaurantowners"
             }
         ]
+

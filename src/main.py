@@ -1,10 +1,11 @@
 import os
 import sys
-from dotenv import load_dotenv
-from termcolor import colored
 
 # Ensure project root is in path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from dotenv import load_dotenv
+from src.utils.console import colored
 
 from src.core.agent import Agent
 from src.core.orchestrator import Orchestrator
@@ -77,4 +78,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

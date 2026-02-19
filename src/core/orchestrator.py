@@ -3,7 +3,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from termcolor import colored
+from src.utils.console import colored
 
 from .agent import Agent
 
@@ -1202,7 +1202,24 @@ class Orchestrator:
 
     def _has_clear_wedge(self, strategist_output: str, competitor_output: Optional[str]) -> bool:
         combined = f"{strategist_output}\n{competitor_output or ''}".lower()
-        wedge_terms = ["niche", "vertical", "industry-specific", "differentiation", "unique", "wedge", "specialized"]
+        wedge_terms = [
+            "niche",
+            "vertical",
+            "industry-specific",
+            "differentiation",
+            "unique",
+            "wedge",
+            "specialized",
+            "specific persona",
+            "narrow persona",
+            "specific segment",
+            "narrow segment",
+            "use-case",
+            "model-specific",
+            "underserved",
+            "first-time",
+            "elderly",
+        ]
         return any(term in combined for term in wedge_terms)
 
     def _format_scorecard(self, scorecard: Dict[str, Any]) -> str:
@@ -1230,3 +1247,4 @@ class Orchestrator:
                 output_file.write(json_output)
             print(colored(f"[Orchestrator] Results exported to {filepath}", "green"))
         return json_output
+

@@ -1,5 +1,5 @@
 from ddgs import DDGS
-from termcolor import colored
+from src.utils.console import colored
 from typing import List, Dict
 
 from src.config import get_settings
@@ -45,3 +45,4 @@ class SearchClient:
                 "source": "MockWeb"
             }
         ]
+
