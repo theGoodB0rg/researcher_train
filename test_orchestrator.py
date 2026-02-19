@@ -59,6 +59,11 @@ class OrchestratorHardeningTests(unittest.TestCase):
         self.assertEqual(plan["mode"], "B2C_PLG")
         self.assertIn("feature requests", plan["scout_topic"])
 
+    def test_mode_classifier_routes_home_appliance_homeowners_to_b2c_plg(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        plan = orchestrator._classify_topic_mode("home appliance inventory and troubleshooting assistant for homeowners")
+        self.assertEqual(plan["mode"], "B2C_PLG")
+
     def test_buyer_first_brief_parsing(self):
         orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
         brief = orchestrator._parse_buyer_first_brief(
@@ -107,7 +112,7 @@ class OrchestratorHardeningTests(unittest.TestCase):
             pivot_instruction="Low willingness to pay - raise price point for high-value customers",
             topic_mode="B2B_STRICT",
         )
-        self.assertIn("budget ownership", next_topic.lower())
+        self.assertIn("budget owning", next_topic.lower())
 
     def test_next_topic_uses_root_topic_to_prevent_recursive_suffixes(self):
         orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
@@ -119,7 +124,7 @@ class OrchestratorHardeningTests(unittest.TestCase):
         )
         self.assertNotIn("internal operations workflow internal operations workflow", next_topic.lower())
         self.assertIn("invoice", next_topic.lower())
-        self.assertIn("budget ownership", next_topic.lower())
+        self.assertIn("budget owning", next_topic.lower())
 
     def test_saturated_market_forces_vertical_pivot_format(self):
         orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
@@ -145,6 +150,15 @@ class OrchestratorHardeningTests(unittest.TestCase):
         )
         self.assertNotIn("internal operations workflow", pivot.lower())
         self.assertIn("vertical:", pivot.lower())
+
+    def test_vertical_pivot_does_not_confuse_appliance_with_ap(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        pivot = orchestrator._suggest_vertical_pivot(
+            root_topic="home appliance troubleshooting",
+            topic_mode="B2B_STRICT",
+        )
+        self.assertIn("appliance", pivot.lower())
+        self.assertNotIn("invoice approval", pivot.lower())
 
     def test_b2c_hard_gates_allow_realistic_plg_plan(self):
         orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
@@ -270,6 +284,36 @@ class OrchestratorHardeningTests(unittest.TestCase):
         )
         self.assertTrue(gates["blocked"])
         self.assertTrue(any("Pricing sanity gate failed" in issue for issue in gates["issues"]))
+
+    def test_low_confidence_mid_willingness_does_not_auto_block_b2b(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        gates = orchestrator._evaluate_hard_gates(
+            topic="construction invoicing",
+            scout_topic="construction invoicing operations",
+            scout_output="URL: https://example.com/source",
+            analyst_output="Boring Score: 8\nhttps://example.com/source",
+            strategist_output="Pricing Model: $300/month\nBudget Owner: Operations Manager",
+            competitor_output=None,
+            willingness_output="Price Willingness Score: 52%\nComposite confidence: 55%",
+            sales_output="1-Month Feasibility: CHALLENGING",
+            domain_shift_authorized=False,
+        )
+        self.assertFalse(any("Payment intent gate failed" in issue for issue in gates["issues"]))
+
+    def test_high_confidence_mid_willingness_blocks_b2b(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        gates = orchestrator._evaluate_hard_gates(
+            topic="construction invoicing",
+            scout_topic="construction invoicing operations",
+            scout_output="URL: https://example.com/source",
+            analyst_output="Boring Score: 8\nhttps://example.com/source",
+            strategist_output="Pricing Model: $300/month\nBudget Owner: Operations Manager",
+            competitor_output=None,
+            willingness_output="Price Willingness Score: 52%\nComposite confidence: 80%",
+            sales_output="1-Month Feasibility: CHALLENGING",
+            domain_shift_authorized=False,
+        )
+        self.assertTrue(any("Payment intent gate failed" in issue for issue in gates["issues"]))
 
     def test_buyer_first_mode_routes_scout_topic(self):
         strategist_response = """

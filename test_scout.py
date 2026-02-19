@@ -36,6 +36,20 @@ class ScoutQuerySeedTests(unittest.TestCase):
         self.assertIn("ops_workarounds", labels)
         self.assertIn("cost_risk_signals", labels)
 
+    def test_structured_buyer_first_seed_preserves_workflow_and_pain_terms(self):
+        scout = ScoutAgent("Trend Scout", "Researcher", "test prompt")
+        seed = scout._build_query_seed(
+            "buyer: operations leads; vertical: construction subcontractors; "
+            "workflow: invoice approval and reconciliation; pain: manual invoice matching and delayed approvals"
+        )
+        lowered = seed.lower()
+        self.assertIn("construction", lowered)
+        self.assertIn("invoice", lowered)
+        self.assertIn("approval", lowered)
+        self.assertIn("delayed", lowered)
+        self.assertNotIn("buyer", lowered)
+        self.assertNotIn("vertical", lowered)
+
 
 if __name__ == "__main__":
     unittest.main()

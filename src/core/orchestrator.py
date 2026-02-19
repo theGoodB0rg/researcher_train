@@ -59,9 +59,13 @@ class Orchestrator:
             print(colored(f"\n--- ITERATION {iteration}/{self.max_iterations} ---", "yellow"))
             self.conversation_history = []
 
-            if buyer_brief:
+            iteration_buyer_brief = buyer_brief or self._parse_buyer_first_brief(topic)
+            if iteration_buyer_brief:
                 topic_mode = "B2B_BUYER_FIRST"
-                scout_topic = self._build_buyer_first_scout_topic(buyer_brief=buyer_brief, pain_focus=topic)
+                scout_topic = self._build_buyer_first_scout_topic(
+                    buyer_brief=iteration_buyer_brief,
+                    pain_focus=topic,
+                )
             else:
                 topic_plan = self._classify_topic_mode(topic)
                 topic_mode = topic_plan["mode"]
@@ -144,13 +148,16 @@ class Orchestrator:
                 )
                 continue
 
-            analyst_prompt = self._analyst_prompt_for_mode(topic_mode=topic_mode, buyer_brief=buyer_brief)
+            analyst_prompt = self._analyst_prompt_for_mode(topic_mode=topic_mode, buyer_brief=iteration_buyer_brief)
             analyst_output = self._run_agent(
                 "Pain Analyst",
                 analyst_prompt,
                 context=self.conversation_history,
             )
-            strategist_prompt = self._strategist_prompt_for_mode(topic_mode=topic_mode, buyer_brief=buyer_brief)
+            strategist_prompt = self._strategist_prompt_for_mode(
+                topic_mode=topic_mode,
+                buyer_brief=iteration_buyer_brief,
+            )
             strategist_output = self._run_agent(
                 "SaaS Strategist",
                 strategist_prompt,
@@ -328,15 +335,32 @@ class Orchestrator:
             "instagram",
             "template",
             "plugin",
+            "home",
+            "homeowner",
+            "homeowners",
+            "appliance",
+            "appliances",
+            "household",
+            "consumer",
+            "diy",
+            "repair",
             "portfolio",
             "resume",
             "linkedin",
         }
 
-        if any(term in lowered for term in b2b_terms):
+        b2b_hits = sum(1 for term in b2b_terms if term in lowered)
+        b2c_hits = sum(1 for term in b2c_plg_terms if term in lowered)
+
+        # If the only B2B cue is generic wording (often "saas"), prefer B2C_PLG when consumer terms are present.
+        if b2c_hits > 0 and b2b_hits <= 1:
+            scout_topic = f"{normalized} user complaints feature requests alternatives"
+            return {"mode": "B2C_PLG", "scout_topic": scout_topic}
+
+        if b2b_hits > 0:
             return {"mode": "B2B_STRICT", "scout_topic": normalized}
 
-        if any(term in lowered for term in b2c_plg_terms):
+        if b2c_hits > 0:
             scout_topic = f"{normalized} user complaints feature requests alternatives"
             return {"mode": "B2C_PLG", "scout_topic": scout_topic}
 
@@ -370,13 +394,16 @@ class Orchestrator:
             "buyer": buyer,
             "workflow": workflow,
             "pain": pain or "recurring operational bottlenecks",
+            "vertical": parsed.get("vertical", ""),
         }
 
     def _build_buyer_first_scout_topic(self, buyer_brief: Dict[str, str], pain_focus: str) -> str:
         buyer = buyer_brief.get("buyer", "").strip()
         workflow = buyer_brief.get("workflow", "").strip()
-        pain = self._compact_topic_terms(pain_focus or buyer_brief.get("pain", ""))
-        return f"{buyer} {workflow} {pain} operational pain points".strip()
+        vertical = buyer_brief.get("vertical", "").strip()
+        pain = (pain_focus or buyer_brief.get("pain", "")).strip()
+        parts = [buyer, vertical, workflow, pain]
+        return re.sub(r"\s+", " ", " ".join(part for part in parts if part)).strip()
 
     def _format_buyer_brief(self, buyer_brief: Optional[Dict[str, str]]) -> str:
         if not buyer_brief:
@@ -389,9 +416,10 @@ class Orchestrator:
     def _build_root_topic_seed(self, initial_topic: str, buyer_brief: Optional[Dict[str, str]], topic: str) -> str:
         if buyer_brief:
             buyer = buyer_brief.get("buyer", "")
+            vertical = buyer_brief.get("vertical", "")
             workflow = buyer_brief.get("workflow", "")
             pain = buyer_brief.get("pain", topic)
-            seed = f"{buyer} {workflow} {pain}".strip()
+            seed = f"{buyer} {vertical} {workflow} {pain}".strip()
             return self._normalize_topic_phrase(seed)
         return self._normalize_topic_phrase(initial_topic or topic)
 
@@ -491,12 +519,12 @@ class Orchestrator:
             return self._normalize_topic_phrase(recovered)
         if "budget owner" in lower_pivot:
             self._domain_shift_authorized_next_iteration = False
-            return self._merge_root_with_modifier(base_topic, "for operations managers")
+            return self._merge_root_with_modifier(base_topic, "for budget-owning operators")
         if "price point" in lower_pivot:
             self._domain_shift_authorized_next_iteration = False
             if active_mode == "B2C_PLG":
                 return self._merge_root_with_modifier(base_topic, "for a narrower user segment with higher repeat usage")
-            return self._merge_root_with_modifier(base_topic, "for operations teams with budget ownership")
+            return self._merge_root_with_modifier(base_topic, "for budget-owning operators")
         if "willingness" in lower_pivot and active_mode == "B2C_PLG":
             self._domain_shift_authorized_next_iteration = False
             return self._merge_root_with_modifier(base_topic, "with stronger activation and conversion hooks")
@@ -624,28 +652,33 @@ class Orchestrator:
 
     def _suggest_vertical_pivot(self, root_topic: str, topic_mode: str) -> str:
         root = self._compact_topic_terms(root_topic, max_terms=6)
-        lowered = root.lower()
+        root_tokens = set(re.findall(r"[a-z0-9]+", root.lower()))
 
-        if any(term in lowered for term in {"invoice", "accounts", "payable", "ap"}):
+        if root_tokens & {"invoice", "invoices", "accounts", "payable", "ap"}:
             buyer = "operations leads at specialized service firms"
             vertical = "construction subcontractors"
             workflow = "invoice approval and reconciliation"
             pain = "manual invoice matching and delayed approvals"
-        elif any(term in lowered for term in {"dental", "clinic", "inventory"}):
+        elif root_tokens & {"dental", "clinic", "inventory"}:
             buyer = "practice managers"
             vertical = "multi-location dental clinics"
             workflow = "inventory reorder and stock reconciliation"
             pain = "stockouts and manual reorder tracking"
-        elif any(term in lowered for term in {"insurance", "claim", "adjuster"}):
+        elif root_tokens & {"insurance", "claim", "adjuster", "adjusters"}:
             buyer = "independent insurance adjusters"
             vertical = "property and casualty claims"
             workflow = "claim documentation and evidence packaging"
             pain = "fragmented evidence and repetitive claim writeups"
-        elif any(term in lowered for term in {"cpa", "tax", "accounting"}):
+        elif root_tokens & {"cpa", "tax", "accounting"}:
             buyer = "partners at small CPA firms"
             vertical = "tax and bookkeeping practices"
             workflow = "client document collection and deadline follow-up"
             pain = "missing client files and repeated reminder chasing"
+        elif root_tokens & {"appliance", "appliances", "homeowner", "homeowners", "repair"}:
+            buyer = "home warranty operations leads"
+            vertical = "residential appliance support"
+            workflow = "appliance issue triage and maintenance follow-up"
+            pain = "manual model lookup and inconsistent troubleshooting notes"
         else:
             buyer = "operations leads"
             vertical = "niche service businesses"
@@ -913,8 +946,12 @@ class Orchestrator:
 
         if willingness_output:
             willingness_score = self._extract_willingness_score(willingness_output)
-            if willingness_score < 55:
-                issues.append("Payment intent gate failed: willingness signal is too weak (<55%).")
+            willingness_confidence = self._extract_willingness_confidence(willingness_output)
+            if willingness_score < 45:
+                issues.append("Payment intent gate failed: willingness signal is too weak (<45%).")
+                pivot = "Low willingness to pay - raise price point for high-value customers"
+            elif willingness_score < 55 and willingness_confidence >= 70:
+                issues.append("Payment intent gate failed: low willingness with high confidence evidence.")
                 pivot = "Low willingness to pay - raise price point for high-value customers"
 
         if competitor_output:
@@ -983,8 +1020,12 @@ class Orchestrator:
 
         if willingness_output:
             willingness_score = self._extract_willingness_score(willingness_output)
-            if willingness_score < 40:
-                issues.append("Payment intent gate failed: willingness signal is too weak (<40%) for B2C_PLG.")
+            willingness_confidence = self._extract_willingness_confidence(willingness_output)
+            if willingness_score < 32:
+                issues.append("Payment intent gate failed: willingness signal is too weak (<32%) for B2C_PLG.")
+                pivot = "Low willingness to pay - improve activation and conversion proof"
+            elif willingness_score < 40 and willingness_confidence >= 70:
+                issues.append("Payment intent gate failed: low willingness with high confidence evidence for B2C_PLG.")
                 pivot = "Low willingness to pay - improve activation and conversion proof"
 
         if competitor_output:
@@ -1043,6 +1084,15 @@ class Orchestrator:
         if match:
             return max(0.0, min(100.0, float(match.group(1))))
         return 40.0
+
+    def _extract_willingness_confidence(self, willingness_output: Optional[str]) -> float:
+        if not willingness_output:
+            return 50.0
+        text = willingness_output.lower()
+        match = re.search(r"composite confidence\s*:\s*(\d+(?:\.\d+)?)\s*%", text, flags=re.IGNORECASE)
+        if match:
+            return max(0.0, min(100.0, float(match.group(1))))
+        return 50.0
 
     def _score_competition(self, competitor_output: Optional[str]) -> float:
         saturation = self._extract_market_saturation(competitor_output)

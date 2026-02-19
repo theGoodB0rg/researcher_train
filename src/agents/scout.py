@@ -105,6 +105,10 @@ class ScoutAgent(Agent):
         return "B2B_DISCOVERY"
 
     def _build_query_seed(self, topic: str, max_terms: int = 7) -> str:
+        structured = self._extract_structured_focus(topic)
+        if structured:
+            return self._compact_focus_terms(structured, max_terms=12)
+
         tokens = re.findall(r"[a-z0-9]+", (topic or "").lower())
         if not tokens:
             return topic
@@ -137,6 +141,56 @@ class ScoutAgent(Agent):
             if len(selected) >= max_terms:
                 break
 
+        return " ".join(selected) if selected else " ".join(tokens[:max_terms])
+
+    def _extract_structured_focus(self, topic: str) -> str:
+        text = (topic or "").strip()
+        if ":" not in text:
+            return ""
+
+        segments = [segment.strip() for segment in re.split(r"[;\|]", text) if segment.strip()]
+        parsed: Dict[str, str] = {}
+        for segment in segments:
+            match = re.match(r"^\s*([a-zA-Z_ ]+)\s*:\s*(.+)$", segment)
+            if not match:
+                continue
+            key = match.group(1).strip().lower().replace(" ", "_")
+            value = match.group(2).strip()
+            parsed[key] = value
+
+        workflow = parsed.get("workflow", "")
+        pain = parsed.get("pain", "") or parsed.get("problem", "")
+        vertical = parsed.get("vertical", "")
+        buyer = parsed.get("buyer", "")
+        combined = " ".join(part for part in [vertical, workflow, pain, buyer] if part).strip()
+        return combined
+
+    def _compact_focus_terms(self, text: str, max_terms: int = 12) -> str:
+        tokens = re.findall(r"[a-z0-9]+", (text or "").lower())
+        if not tokens:
+            return text
+        stop_words = {
+            "the",
+            "and",
+            "for",
+            "with",
+            "from",
+            "into",
+            "via",
+            "buyer",
+            "vertical",
+            "workflow",
+            "pain",
+        }
+        selected = []
+        seen = set()
+        for token in tokens:
+            if token in seen or token in stop_words:
+                continue
+            seen.add(token)
+            selected.append(token)
+            if len(selected) >= max_terms:
+                break
         return " ".join(selected) if selected else " ".join(tokens[:max_terms])
 
     def _collect_with_adaptive_strategy(self, topic: str, query_seed: str, research_mode: str) -> Dict[str, object]:

@@ -158,7 +158,11 @@ class WillingnessToPayValidatorAgent(Agent):
 
         for match in re.finditer(r"\$(\d+(?:\.\d+)?)\s*/\s*(?:month|mo)\b", text, flags=re.IGNORECASE):
             monthly_values.append(float(match.group(1)))
+        for match in re.finditer(r"\$(\d+(?:\.\d+)?)\s*per\s*(?:month|mo)\b", text, flags=re.IGNORECASE):
+            monthly_values.append(float(match.group(1)))
         for match in re.finditer(r"\$(\d+(?:\.\d+)?)\s*/\s*year\b", text, flags=re.IGNORECASE):
+            monthly_values.append(float(match.group(1)) / 12.0)
+        for match in re.finditer(r"\$(\d+(?:\.\d+)?)\s*per\s*year\b", text, flags=re.IGNORECASE):
             monthly_values.append(float(match.group(1)) / 12.0)
         return monthly_values
 
@@ -197,10 +201,26 @@ class WillingnessToPayValidatorAgent(Agent):
         return 10.0
 
     def _score_market_proof(self, competitor_prices: List[float], competitor_text: str) -> float:
-        if not competitor_prices:
-            return 30.0
-
+        competitor_count = self._estimate_competitor_count(competitor_text)
         saturation = self._extract_market_saturation(competitor_text)
+
+        if not competitor_prices:
+            if competitor_count >= 8:
+                base = 52.0
+            elif competitor_count >= 4:
+                base = 45.0
+            elif competitor_count >= 1:
+                base = 38.0
+            else:
+                base = 30.0
+            if saturation == "RED":
+                base -= 4.0
+            elif saturation == "YELLOW":
+                base += 4.0
+            elif saturation == "GREEN":
+                base += 10.0
+            return max(20.0, min(85.0, base))
+
         base = min(90.0, 55.0 + (8.0 * len(competitor_prices)))
         if saturation == "RED":
             base -= 10.0
@@ -209,6 +229,17 @@ class WillingnessToPayValidatorAgent(Agent):
         elif saturation == "GREEN":
             base += 8.0
         return max(20.0, min(95.0, base))
+
+    def _estimate_competitor_count(self, competitor_text: str) -> int:
+        text = competitor_text or ""
+        if not text.strip():
+            return 0
+
+        bullet_count = len(re.findall(r"^\s*[-*]\s+", text, flags=re.MULTILINE))
+        numbered_count = len(re.findall(r"^\s*\d+\.\s+", text, flags=re.MULTILINE))
+        url_count = len(re.findall(r"https?://", text, flags=re.IGNORECASE))
+        # Heuristic: URLs are often one per competitor entry.
+        return max(bullet_count, numbered_count, url_count)
 
     def _extract_market_saturation(self, text: str) -> str:
         upper = (text or "").upper()

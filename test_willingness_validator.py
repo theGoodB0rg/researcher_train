@@ -115,6 +115,37 @@ class WillingnessValidatorCompositeTests(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertLessEqual(int(match.group(1)), 45)
 
+    def test_market_proof_not_constant_without_explicit_prices(self):
+        strong_context = [
+            {"role": "Trend Scout", "content": "Manual reconciliation causes delays and errors."},
+            {"role": "SaaS Strategist", "content": "Pricing Model: $300/month. Budget Owner: Director."},
+            {
+                "role": "Competitor Researcher",
+                "content": (
+                    "Competitors Found:\n"
+                    "- Competitor A: https://a.com\n"
+                    "- Competitor B: https://b.com\n"
+                    "- Competitor C: https://c.com\n"
+                    "- Competitor D: https://d.com\n"
+                    "Market Saturation Assessment: YELLOW"
+                ),
+            },
+        ]
+        weak_context = [
+            {"role": "Trend Scout", "content": "Some friction but no concrete complaints."},
+            {"role": "SaaS Strategist", "content": "Pricing Model: $300/month. Budget Owner: Director."},
+            {"role": "Competitor Researcher", "content": "Market Saturation Assessment: RED"},
+        ]
+
+        strong_output = self.agent.process("Validate payment intent", context=strong_context)
+        weak_output = self.agent.process("Validate payment intent", context=weak_context)
+
+        strong_market = re.search(r"Market proof score:\s*(\d+)/100", strong_output)
+        weak_market = re.search(r"Market proof score:\s*(\d+)/100", weak_output)
+        self.assertIsNotNone(strong_market)
+        self.assertIsNotNone(weak_market)
+        self.assertGreater(int(strong_market.group(1)), int(weak_market.group(1)))
+
 
 if __name__ == "__main__":
     unittest.main()
