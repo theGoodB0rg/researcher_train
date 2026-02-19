@@ -186,6 +186,33 @@ class WillingnessValidatorCompositeTests(unittest.TestCase):
         self.assertIsNotNone(recurring_score)
         self.assertLess(int(low_score.group(1)), int(recurring_score.group(1)))
 
+    def test_market_proof_not_pinned_to_floor_for_red_saturation_without_prices(self):
+        context = [
+            {"role": "Trend Scout", "content": "Users report repeated operational friction."},
+            {"role": "SaaS Strategist", "content": "Pricing Model: $99/month. Budget Owner: Operations Lead."},
+            {
+                "role": "Competitor Researcher",
+                "content": (
+                    "Competitors Found:\n"
+                    "1. Top 10 Appliance Workflow Tools 2026 - https://example.com/top-tools\n"
+                    "2. Best Troubleshooting Apps - https://example.com/best-apps\n"
+                    "3. Alternatives for Appliance Ops - https://example.com/alternatives\n"
+                    "4. Comparison: Appliance Assistants - https://example.com/comparison\n"
+                    "5. Guide to Inventory Tools - https://example.com/guide\n"
+                    "6. Vendor List - https://example.com/list\n"
+                    "7. Another Comparison - https://example.com/compare\n"
+                    "8. Best of Year - https://example.com/best-year\n"
+                    "9. Alternatives Roundup - https://example.com/alt-roundup\n"
+                    "10. Top Platforms - https://example.com/top-platforms\n"
+                    "Market Saturation Assessment: RED"
+                ),
+            },
+        ]
+        output = self.agent.process("Validate payment intent", context=context)
+        market = re.search(r"Market proof score:\s*(\d+)/100", output)
+        self.assertIsNotNone(market)
+        self.assertGreaterEqual(int(market.group(1)), 35)
+
 
 if __name__ == "__main__":
     unittest.main()

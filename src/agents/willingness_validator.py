@@ -214,37 +214,47 @@ class WillingnessToPayValidatorAgent(Agent):
         return 10.0
 
     def _score_market_proof(self, competitor_prices: List[float], competitor_text: str) -> float:
-        competitor_count = self._estimate_competitor_count(competitor_text)
+        competitor_count = max(
+            self._estimate_competitor_count(competitor_text),
+            self._extract_competitors_found_count(competitor_text),
+        )
         saturation = self._extract_market_saturation(competitor_text)
         direct_evidence_count = self._extract_direct_competitor_evidence_count(competitor_text)
+        listicle_noise = self._estimate_listicle_noise(competitor_text)
 
-        if not competitor_prices:
-            if direct_evidence_count >= 5:
-                base = 70.0
-            elif direct_evidence_count >= 3:
-                base = 60.0
-            elif direct_evidence_count >= 1:
-                base = 48.0
-            else:
-                base = 32.0
-            if saturation == "RED":
-                base -= 12.0
-            elif saturation == "YELLOW":
-                base += 4.0
-            elif saturation == "GREEN":
-                base += 8.0
-            if competitor_count >= 8 and direct_evidence_count <= 1:
-                base -= 8.0
-            return max(20.0, min(85.0, base))
+        if competitor_prices:
+            # Explicit paid anchors are the strongest evidence that buyers already spend.
+            base = 58.0 + (7.0 * min(4, len(competitor_prices))) + (4.0 * min(5, direct_evidence_count))
+        elif direct_evidence_count > 0:
+            base = 40.0 + (6.0 * min(6, direct_evidence_count))
+        else:
+            # Fallback when LLM omitted prices/direct counts: infer from breadth of discovered products.
+            base = 28.0 + min(30.0, 3.0 * float(competitor_count))
 
-        base = min(92.0, 62.0 + (6.0 * len(competitor_prices)) + (4.0 * direct_evidence_count))
+        # RED means crowded, not necessarily low willingness. Treat it as proof unless evidence is sparse.
         if saturation == "RED":
-            base -= 8.0
+            if competitor_count >= 4 or direct_evidence_count >= 2 or len(competitor_prices) >= 2:
+                base += 6.0
+            else:
+                base -= 6.0
         elif saturation == "YELLOW":
-            base += 2.0
+            base += 4.0
         elif saturation == "GREEN":
-            base += 6.0
-        return max(20.0, min(95.0, base))
+            if competitor_count == 0 and direct_evidence_count == 0 and not competitor_prices:
+                base -= 8.0
+            else:
+                base += 2.0
+
+        # Penalize noisy roundup-heavy evidence so listicles don't look like strong proof.
+        if listicle_noise >= 4 and direct_evidence_count == 0 and not competitor_prices:
+            base -= min(18.0, 2.5 * float(listicle_noise))
+        elif listicle_noise >= 2:
+            base -= min(8.0, 1.5 * float(listicle_noise))
+
+        if competitor_count >= 8 and direct_evidence_count <= 1 and not competitor_prices:
+            base -= 6.0
+
+        return max(12.0, min(95.0, base))
 
     def _estimate_competitor_count(self, competitor_text: str) -> int:
         text = competitor_text or ""
@@ -256,6 +266,20 @@ class WillingnessToPayValidatorAgent(Agent):
         url_count = len(re.findall(r"https?://", text, flags=re.IGNORECASE))
         # Heuristic: URLs are often one per competitor entry.
         return max(bullet_count, numbered_count, url_count)
+
+    def _extract_competitors_found_count(self, competitor_text: str) -> int:
+        text = competitor_text or ""
+        if not text.strip():
+            return 0
+
+        parenthesized = re.search(r"Competitors Found\s*\((\d+)\)", text, flags=re.IGNORECASE)
+        if parenthesized:
+            return int(parenthesized.group(1))
+
+        inline = re.search(r"Competitors Found\s*:\s*(\d+)", text, flags=re.IGNORECASE)
+        if inline:
+            return int(inline.group(1))
+        return 0
 
     def _extract_market_saturation(self, text: str) -> str:
         upper = (text or "").upper()
@@ -284,6 +308,30 @@ class WillingnessToPayValidatorAgent(Agent):
         if evidence_hits:
             return sum(1 for value in evidence_hits if value >= 2)
         return 0
+
+    def _estimate_listicle_noise(self, competitor_text: str) -> int:
+        text = (competitor_text or "").lower()
+        if not text.strip():
+            return 0
+
+        markers = [
+            r"\bbest\b",
+            r"\btop\s+\d+\b",
+            r"\balternatives?\b",
+            r"\bcomparison\b",
+            r"\broundup\b",
+            r"\bvs\b",
+            r"\bguide\b",
+        ]
+        marker_hits = sum(len(re.findall(pattern, text, flags=re.IGNORECASE)) for pattern in markers)
+        url_hits = len(
+            re.findall(
+                r"https?://[^\s]+/(?:blog|articles|advisor|tools|top|best)",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+        return min(12, marker_hits + url_hits)
 
     def _score_budget_fit(self, strategist_text: str) -> float:
         text = strategist_text.lower()

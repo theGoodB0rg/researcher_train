@@ -355,11 +355,18 @@ class DataCollector:
         overrides = source_query_overrides or {}
         override_queries = overrides.get(source_type, [])
         if override_queries:
-            return self._normalize_query_list([query] + override_queries)
+            variants = self._normalize_query_list([query] + override_queries)
+            if source_type == "web":
+                return self._apply_topic_disambiguation(variants, topic=topic)
+            return variants
 
         if source_type in {"hackernews", "web"}:
-            return self._build_query_variants(query=query, topic=topic, source_type=source_type)
-        return [query]
+            variants = self._build_query_variants(query=query, topic=topic, source_type=source_type)
+        else:
+            variants = [query]
+        if source_type == "web":
+            return self._apply_topic_disambiguation(variants, topic=topic)
+        return variants
 
     def _build_query_variants(self, query: str, topic: str, source_type: str) -> List[str]:
         if source_type == "hackernews":
@@ -404,6 +411,58 @@ class DataCollector:
             seen.add(normalized)
             variants.append(candidate)
         return variants
+
+    def _apply_topic_disambiguation(self, queries: List[str], topic: str) -> List[str]:
+        if not queries or not self._needs_home_assistant_disambiguation(topic):
+            return queries
+
+        negative_suffix = (
+            '-"home assistant" '
+            "-site:home-assistant.io "
+            "-site:community.home-assistant.io "
+            "-site:forum.aqara.com"
+        )
+        enriched: List[str] = []
+        for query in queries:
+            lowered = query.lower()
+            if '-"home assistant"' in lowered or "-site:home-assistant.io" in lowered:
+                enriched.append(query)
+                continue
+            enriched.append(f"{query} {negative_suffix}".strip())
+        return self._normalize_query_list(enriched)
+
+    def _needs_home_assistant_disambiguation(self, topic: str) -> bool:
+        lowered = (topic or "").lower()
+        if not lowered:
+            return False
+
+        explicit_home_assistant_intent = (
+            "home assistant" in lowered
+            or "home-assistant" in lowered
+            or "hass" in lowered
+        )
+        if explicit_home_assistant_intent:
+            return False
+
+        tokens = set(re.findall(r"[a-z0-9]+", lowered))
+        iot_intent_tokens = {"automation", "smart", "iot", "zigbee", "zwave", "matter"}
+        if tokens & iot_intent_tokens:
+            return False
+
+        has_assistant = "assistant" in tokens
+        has_home_context = bool({"home", "homeowner", "homeowners"} & tokens)
+        appliance_context_tokens = {
+            "appliance",
+            "inventory",
+            "troubleshooting",
+            "repair",
+            "breakdown",
+            "landlord",
+            "rental",
+            "warranty",
+        }
+        has_appliance_context = bool(appliance_context_tokens & tokens)
+        return has_assistant and (has_home_context or has_appliance_context) and has_appliance_context
 
     def _dedupe_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         seen_urls: Set[str] = set()
@@ -653,6 +712,14 @@ class DataCollector:
             score -= 0.04
             notes.append("no_first_person_signal")
 
+        if source_type == "web" and self._is_home_assistant_brand_collision(
+            topic_terms=topic_terms,
+            domain=domain,
+            full_text=full_text,
+        ):
+            score -= 0.22
+            notes.append("brand_semantic_drift")
+
         if mode == "B2C_PLG" and source_type == "web" and not (is_forum_domain or domain in review_domains):
             score -= 0.08
             notes.append("non_user_generated_web_source")
@@ -684,6 +751,38 @@ class DataCollector:
         if not notes:
             notes.append("neutral_signal")
         return score, notes[:8]
+
+    def _is_home_assistant_brand_collision(self, topic_terms: Set[str], domain: str, full_text: str) -> bool:
+        brand_domains = {
+            "home-assistant.io",
+            "community.home-assistant.io",
+            "forum.aqara.com",
+        }
+        brand_hit = (
+            domain in brand_domains
+            or "home assistant" in full_text
+            or "home-assistant" in full_text
+        )
+        if not brand_hit:
+            return False
+
+        explicit_ha_intent_terms = {"automation", "smart", "iot", "zigbee", "zwave", "matter", "homeassistant"}
+        if topic_terms & explicit_ha_intent_terms:
+            return False
+
+        appliance_context_terms = {
+            "appliance",
+            "inventory",
+            "homeowner",
+            "homeowners",
+            "landlord",
+            "rental",
+            "warranty",
+            "troubleshooting",
+            "repair",
+            "breakdown",
+        }
+        return bool(topic_terms & appliance_context_terms)
 
     def _summarize_b2c_user_evidence(self, accepted_results: List[Dict[str, Any]]) -> Dict[str, Any]:
         discussion_sources = 0

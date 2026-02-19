@@ -98,6 +98,25 @@ class DataCollectorVariantTests(unittest.TestCase):
         self.assertGreaterEqual(diag["dropped_low_quality"], 1)
         self.assertTrue(any(reason in reasons for reason in {"reference_dictionary_source", "thin_content"}))
 
+    def test_home_assistant_brand_is_excluded_for_appliance_assistant_topics(self):
+        collector = DataCollector(providers=[])
+        variants = collector._resolve_query_variants(
+            query="home appliance inventory troubleshooting assistant homeowners user complaints",
+            topic="home appliance inventory troubleshooting assistant for homeowners",
+            source_type="web",
+        )
+        self.assertTrue(any("-site:home-assistant.io" in query for query in variants))
+        self.assertTrue(any('-"home assistant"' in query for query in variants))
+
+    def test_home_assistant_topics_do_not_add_negative_brand_filters(self):
+        collector = DataCollector(providers=[])
+        variants = collector._resolve_query_variants(
+            query="home assistant zigbee troubleshooting issues",
+            topic="home assistant zigbee automation troubleshooting",
+            source_type="web",
+        )
+        self.assertTrue(all("-site:home-assistant.io" not in query for query in variants))
+
 
 if __name__ == "__main__":
     unittest.main()
