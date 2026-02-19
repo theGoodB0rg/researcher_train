@@ -21,6 +21,15 @@ class ScoutQuerySeedTests(unittest.TestCase):
         )
         self.assertEqual(mode, "B2C_PLG")
 
+    def test_extracts_query_seed_hint_from_prompt(self):
+        scout = ScoutAgent("Trend Scout", "Researcher", "test prompt")
+        hint = scout._extract_query_seed_hint(
+            "Find complaints and issues related to: portfolio tools\n"
+            "Research mode: B2C_PLG\n"
+            "Query seed hint: creator portfolio onboarding churn complaints"
+        )
+        self.assertEqual(hint, "creator portfolio onboarding churn complaints")
+
     def test_b2c_strategy_contains_switching_triggers(self):
         scout = ScoutAgent("Trend Scout", "Researcher", "test prompt")
         strategies = scout._build_strategy_plan("portfolio resume builder", "B2C_PLG")

@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 
 from src.agents.competitor_researcher import CompetitorResearcherAgent
 from src.agents.founder_sales_validator import FounderSalesValidatorAgent
+from src.agents.intake_router import IntakeRouterAgent
 from src.agents.scout import ScoutAgent
 from src.agents.willingness_validator import WillingnessToPayValidatorAgent
 from src.config import get_settings
@@ -24,6 +25,7 @@ from src.prompts import (
     ANALYST_PROMPT,
     COMPETITOR_RESEARCHER_PROMPT,
     FOUNDER_SALES_PROMPT,
+    INTAKE_ROUTER_PROMPT,
     SCOUT_PROMPT,
     SKEPTIC_PROMPT,
     STRATEGIST_PROMPT,
@@ -42,6 +44,7 @@ class StaticMockAgent:
 
 def build_live_agents() -> Dict[str, Any]:
     return {
+        "Intake Router": IntakeRouterAgent("Intake Router", "Research Planner", INTAKE_ROUTER_PROMPT, color="yellow"),
         "Trend Scout": ScoutAgent("Trend Scout", "Researcher", SCOUT_PROMPT, color="cyan"),
         "Pain Analyst": Agent("Pain Analyst", "Product Manager", ANALYST_PROMPT, color="blue"),
         "SaaS Strategist": Agent("SaaS Strategist", "Founder", STRATEGIST_PROMPT, color="magenta"),
@@ -69,6 +72,30 @@ def build_live_agents() -> Dict[str, Any]:
 
 def build_mock_agents() -> Dict[str, Any]:
     return {
+        "Intake Router": StaticMockAgent(
+            "Intake Router",
+            (
+                "{"
+                "\"intent\":\"MARKET_DISCOVERY\","
+                "\"summary\":\"operations workflow bottlenecks\","
+                "\"constraints\":[],"
+                "\"assumptions\":[],"
+                "\"research_mode\":\"B2B_STRICT\","
+                "\"normalized_topic\":\"operations workflow bottlenecks\","
+                "\"buyer\":\"\","
+                "\"workflow\":\"\","
+                "\"pain\":\"\","
+                "\"vertical\":\"\","
+                "\"query_seed\":\"operations workflow bottlenecks\","
+                "\"must_include_terms\":[],"
+                "\"must_exclude_terms\":[],"
+                "\"source_priority\":[\"reddit\",\"forums\",\"reviews\",\"hackernews\",\"web\"],"
+                "\"clarification_needed\":false,"
+                "\"clarification_question\":\"\","
+                "\"confidence\":0.7"
+                "}"
+            ),
+        ),
         "Trend Scout": StaticMockAgent(
             "Trend Scout",
             (

@@ -14,13 +14,17 @@ class ScoutAgent(Agent):
         raw_topic = self._extract_topic(input_data)
         topic = self._strip_query_modifiers(raw_topic)
         research_mode = self._extract_research_mode(input_data)
-        query_seed = self._build_query_seed(topic)
+        query_seed_hint = self._extract_query_seed_hint(input_data)
+        query_seed_source = query_seed_hint or topic
+        query_seed = self._build_query_seed(query_seed_source)
         
         # Collect data from real sources (Reddit, HackerNews, Web)
         print(f"[Scout] Collecting real data for: {topic}")
         if raw_topic.strip().lower() != topic.strip().lower():
             print(colored(f"[Scout] Topic sanitized: {raw_topic} -> {topic}", "yellow"))
         print(colored(f"[Scout] Research mode: {research_mode}", "yellow"))
+        if query_seed_hint:
+            print(colored(f"[Scout] Query seed hint accepted: {query_seed_hint}", "cyan"))
         if query_seed.lower() != topic.lower():
             print(colored(f"[Scout] Query seed (compacted): {query_seed}", "cyan"))
         collection_result = self._collect_with_adaptive_strategy(
@@ -106,6 +110,12 @@ class ScoutAgent(Agent):
         if match:
             return match.group(1).upper()
         return "B2B_DISCOVERY"
+
+    def _extract_query_seed_hint(self, input_data: str) -> str:
+        match = re.search(r"Query seed hint\s*:\s*(.+)", input_data, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        return ""
 
     def _build_query_seed(self, topic: str, max_terms: int = 8) -> str:
         structured = self._extract_structured_focus(topic)

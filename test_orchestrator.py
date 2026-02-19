@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from src.core.orchestrator import Orchestrator
@@ -12,12 +13,32 @@ class StubAgent:
         return self.response
 
 
+class CaptureContextAgent:
+    def __init__(self, name, response):
+        self.name = name
+        self.response = response
+        self.last_context = None
+
+    def process(self, input_data, context=None):
+        self.last_context = context or []
+        return self.response
+
+
 class FailOnCallAgent:
     def __init__(self, name):
         self.name = name
 
     def process(self, input_data, context=None):
         raise AssertionError(f"{self.name} should not be called")
+
+
+class StubInputOrchestrator(Orchestrator):
+    def __init__(self, *args, stub_input_value="", **kwargs):
+        super().__init__(*args, **kwargs)
+        self._stub_input_value = stub_input_value
+
+    def _prompt_user(self, prompt_text: str, color: str = "yellow") -> str:
+        return self._stub_input_value
 
 
 class OrchestratorHardeningTests(unittest.TestCase):
@@ -317,6 +338,78 @@ class OrchestratorHardeningTests(unittest.TestCase):
         )
         self.assertTrue(any("Payment intent gate failed" in issue for issue in gates["issues"]))
 
+    def test_extract_monthly_price_parses_comma_formatted_currency(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        price = orchestrator._extract_monthly_price("Pricing Model: $1,200/month for claims teams.")
+        self.assertEqual(price, 1200)
+
+    def test_soft_override_downgrades_saturation_only_no_go(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        verdict = orchestrator._apply_soft_verdict_override(
+            verdict="NO GO",
+            hard_gates={"blocked": False, "issues": [], "advisories": []},
+            scorecard={"weighted_score": 61},
+            skeptic_output="Final Verdict: NO GO due to saturated market",
+        )
+        self.assertEqual(verdict, "QUALIFIED")
+
+    def test_soft_override_does_not_change_low_score_no_go(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        verdict = orchestrator._apply_soft_verdict_override(
+            verdict="NO GO",
+            hard_gates={"blocked": False, "issues": [], "advisories": []},
+            scorecard={"weighted_score": 44},
+            skeptic_output="Final Verdict: NO GO due to saturated market",
+        )
+        self.assertEqual(verdict, "NO GO")
+
+    def test_red_competition_alone_does_not_auto_block_b2b(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        gates = orchestrator._evaluate_hard_gates(
+            topic="home warranty claims coordination",
+            scout_topic="home warranty claims coordination workflow",
+            scout_output="URL: https://example.com/source",
+            analyst_output="Boring Score: 8\nhttps://example.com/source",
+            strategist_output=(
+                "The Pitch: claims coordination tool for home warranty companies.\n"
+                "Pricing Model: $300/month.\n"
+                "Budget Owner: Operations Manager.\n"
+                "Differentiation: niche workflow-specific automation."
+            ),
+            competitor_output=(
+                "Competitors Found: direct competitor - home warranty claims workflow tool.\n"
+                "Market Saturation Assessment: RED."
+            ),
+            willingness_output="Price Willingness Score: 70%\nComposite confidence: 65%",
+            sales_output="1-Month Feasibility: CHALLENGING",
+            domain_shift_authorized=False,
+        )
+        self.assertFalse(gates["blocked"])
+        self.assertTrue(any("Competition warning" in advisory for advisory in gates.get("advisories", [])))
+
+    def test_red_direct_competition_plus_weak_willingness_blocks_b2b(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        gates = orchestrator._evaluate_hard_gates(
+            topic="home warranty claims coordination",
+            scout_topic="home warranty claims coordination workflow",
+            scout_output="URL: https://example.com/source",
+            analyst_output="Boring Score: 8\nhttps://example.com/source",
+            strategist_output=(
+                "The Pitch: claims coordination tool for home warranty companies.\n"
+                "Pricing Model: $300/month.\n"
+                "Budget Owner: Operations Manager."
+            ),
+            competitor_output=(
+                "Competitors Found: direct competitor - home warranty claims workflow tool.\n"
+                "Market Saturation Assessment: RED."
+            ),
+            willingness_output="Price Willingness Score: 42%\nComposite confidence: 82%",
+            sales_output="1-Month Feasibility: CHALLENGING",
+            domain_shift_authorized=False,
+        )
+        self.assertTrue(gates["blocked"])
+        self.assertTrue(any("Competition gate failed" in issue for issue in gates["issues"]))
+
     def test_buyer_first_mode_routes_scout_topic(self):
         strategist_response = """
 1. The Pitch: IntakeOps for staffing agencies.
@@ -338,6 +431,162 @@ class OrchestratorHardeningTests(unittest.TestCase):
         first_iteration = results["iterations"][0]
         self.assertIn("staffing agencies", first_iteration["scout_topic"].lower())
         self.assertIn("candidate intake", first_iteration["scout_topic"].lower())
+
+    def test_intake_router_mode_hint_applies_on_first_iteration(self):
+        strategist_response = """
+1. The Pitch: CreatorHub for portfolio creators.
+2. Pricing Model: $19/month for creators.
+4. Acquisition Channel: Product Hunt and SEO.
+"""
+        intake_plan = json.dumps(
+            {
+                "research_mode": "B2C_PLG",
+                "normalized_topic": "portfolio website helper for creators",
+                "buyer": "",
+                "workflow": "",
+                "pain": "",
+                "vertical": "",
+                "query_seed": "portfolio creator onboarding churn complaints",
+                "must_include_terms": ["portfolio", "creator", "onboarding"],
+                "must_exclude_terms": [],
+                "source_priority": ["reddit", "forums", "reviews"],
+                "clarification_needed": False,
+                "clarification_question": "",
+                "confidence": 0.82,
+            }
+        )
+        agents = {
+            "Intake Router": StubAgent("Intake Router", intake_plan),
+            "Trend Scout": StubAgent("Trend Scout", "1. complaint from real source https://example.com/a"),
+            "Pain Analyst": StubAgent("Pain Analyst", "Boring Score: 6\nhttps://example.com/a"),
+            "SaaS Strategist": StubAgent("SaaS Strategist", strategist_response),
+            "The Skeptic": StubAgent("The Skeptic", "Final Verdict: GO"),
+        }
+        orchestrator = Orchestrator(agents, max_iterations=1, interactive_pivots=False)
+        results = orchestrator.run_round_table("an ambiguous idea request with mixed wording")
+
+        self.assertEqual(results["mode"], "B2C_PLG")
+        self.assertIsNotNone(results["intake_plan"])
+        self.assertIn("feature requests", results["iterations"][0]["scout_topic"].lower())
+
+    def test_intake_clarification_skip_continues_with_low_confidence_plan(self):
+        intake_plan = json.dumps(
+            {
+                "research_mode": "B2B_DISCOVERY",
+                "normalized_topic": "ambiguous long brief text",
+                "buyer": "",
+                "workflow": "",
+                "pain": "",
+                "vertical": "",
+                "query_seed": "ambiguous long brief",
+                "must_include_terms": [],
+                "must_exclude_terms": [],
+                "source_priority": ["reddit", "forums", "reviews"],
+                "clarification_needed": True,
+                "clarification_question": "Who is the primary buyer?",
+                "confidence": 0.4,
+            }
+        )
+        agents = {
+            "Intake Router": StubAgent("Intake Router", intake_plan),
+            "Trend Scout": StubAgent("Trend Scout", "1. complaint from source https://example.com/a"),
+            "Pain Analyst": StubAgent("Pain Analyst", "Boring Score: 7\nhttps://example.com/a"),
+            "SaaS Strategist": StubAgent(
+                "SaaS Strategist",
+                "Pricing Model: $250/month\nBudget Owner: Operations Manager",
+            ),
+            "The Skeptic": StubAgent("The Skeptic", "Final Verdict: GO"),
+        }
+        orchestrator = StubInputOrchestrator(
+            agents,
+            max_iterations=1,
+            interactive_pivots=True,
+            stub_input_value="",
+        )
+        results = orchestrator.run_round_table("long ambiguous brief")
+        self.assertNotEqual(results["final_verdict"], "INTAKE_CLARIFICATION_REQUIRED")
+        self.assertGreaterEqual(results.get("iteration_count", 0), 1)
+        self.assertLessEqual(float(results["intake_plan"].get("confidence", 1.0)), 0.35)
+
+    def test_feasibility_intent_skips_scout_and_runs_direct_review(self):
+        intake_plan = json.dumps(
+            {
+                "intent": "FEASIBILITY_REVIEW",
+                "summary": "Review feasibility of appliance digital twin plan",
+                "constraints": ["timeline: 30 days"],
+                "assumptions": ["must reach $5k MRR"],
+                "research_mode": "B2C_PLG",
+                "normalized_topic": "home appliance digital twin feasibility",
+                "buyer": "",
+                "workflow": "",
+                "pain": "",
+                "vertical": "",
+                "query_seed": "home appliance digital twin troubleshooting",
+                "must_include_terms": [],
+                "must_exclude_terms": [],
+                "source_priority": ["reddit", "forums"],
+                "clarification_needed": False,
+                "clarification_question": "",
+                "confidence": 0.82,
+            }
+        )
+        agents = {
+            "Intake Router": StubAgent("Intake Router", intake_plan),
+            "Trend Scout": FailOnCallAgent("Trend Scout"),
+            "Pain Analyst": StubAgent("Pain Analyst", "Boring Score: 6"),
+            "SaaS Strategist": StubAgent(
+                "SaaS Strategist",
+                "Pricing Model: $19/month.\nAcquisition Channel: SEO and community.\nBudget Owner: Household operator.",
+            ),
+            "The Skeptic": StubAgent("The Skeptic", "Final Verdict: GO"),
+        }
+        orchestrator = Orchestrator(agents, max_iterations=1, interactive_pivots=False)
+        results = orchestrator.run_round_table("full feasibility brief content")
+        self.assertEqual(results["intent"], "FEASIBILITY_REVIEW")
+        self.assertEqual(results["iteration_count"], 1)
+
+    def test_user_brief_is_seeded_into_iteration_context(self):
+        intake_plan = json.dumps(
+            {
+                "research_mode": "B2B_DISCOVERY",
+                "normalized_topic": "home digital twin for appliances",
+                "buyer": "",
+                "workflow": "",
+                "pain": "",
+                "vertical": "",
+                "query_seed": "home appliance digital twin maintenance",
+                "must_include_terms": [],
+                "must_exclude_terms": [],
+                "source_priority": ["reddit", "forums"],
+                "clarification_needed": False,
+                "clarification_question": "",
+                "confidence": 0.7,
+            }
+        )
+        analyst = CaptureContextAgent("Pain Analyst", "Boring Score: 7\nhttps://example.com/a")
+        agents = {
+            "Intake Router": StubAgent("Intake Router", intake_plan),
+            "Trend Scout": StubAgent("Trend Scout", "1. complaint from source https://example.com/a"),
+            "Pain Analyst": analyst,
+            "SaaS Strategist": StubAgent("SaaS Strategist", "Pricing Model: $250/month\nBudget Owner: Operations Manager"),
+            "The Skeptic": StubAgent("The Skeptic", "Final Verdict: GO"),
+        }
+        orchestrator = Orchestrator(agents, max_iterations=1, interactive_pivots=False)
+        brief = (
+            "Project Brief: Home Digital Twin. The product stores appliance model metadata and "
+            "uses it for contextual troubleshooting."
+        )
+        orchestrator.run_round_table(brief)
+
+        roles = [item.get("role") for item in (analyst.last_context or [])]
+        self.assertIn("User Brief", roles)
+        self.assertTrue(
+            any(
+                "home digital twin" in (item.get("content", "").lower())
+                for item in (analyst.last_context or [])
+                if item.get("role") == "User Brief"
+            )
+        )
 
     def test_strip_search_modifiers_removes_prompt_suffixes(self):
         orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
