@@ -53,6 +53,7 @@ class WillingnessValidatorCompositeTests(unittest.TestCase):
         self.assertIn("Market proof score:", output)
         self.assertIn("Buyer budget fit score:", output)
         self.assertIn("Cost-of-inaction score:", output)
+        self.assertIn("Usage frequency fit score:", output)
 
     def test_outputs_no_direct_signal_when_quotes_absent(self):
         context = [
@@ -145,6 +146,45 @@ class WillingnessValidatorCompositeTests(unittest.TestCase):
         self.assertIsNotNone(strong_market)
         self.assertIsNotNone(weak_market)
         self.assertGreater(int(strong_market.group(1)), int(weak_market.group(1)))
+
+    def test_low_frequency_consumer_pattern_scores_below_recurring_operator_pattern(self):
+        low_frequency_context = [
+            {
+                "role": "Trend Scout",
+                "content": "Homeowners describe appliance repairs as occasional, seasonal, and as-needed.",
+            },
+            {
+                "role": "SaaS Strategist",
+                "content": "Pricing Model: $10/month. Customer Segment: homeowners.",
+            },
+            {
+                "role": "Competitor Researcher",
+                "content": "Market Saturation Assessment: YELLOW",
+            },
+        ]
+        recurring_context = [
+            {
+                "role": "Trend Scout",
+                "content": "Property managers report weekly recurring dispatch delays and tenant churn risk.",
+            },
+            {
+                "role": "SaaS Strategist",
+                "content": "Pricing Model: $79/month. Budget Owner: Property Manager.",
+            },
+            {
+                "role": "Competitor Researcher",
+                "content": "Market Saturation Assessment: YELLOW\nDirect Product Evidence Count: 2",
+            },
+        ]
+
+        low_output = self.agent.process("Validate payment intent", context=low_frequency_context)
+        recurring_output = self.agent.process("Validate payment intent", context=recurring_context)
+
+        low_score = re.search(r"Price Willingness Score:\s*(\d+)%", low_output)
+        recurring_score = re.search(r"Price Willingness Score:\s*(\d+)%", recurring_output)
+        self.assertIsNotNone(low_score)
+        self.assertIsNotNone(recurring_score)
+        self.assertLess(int(low_score.group(1)), int(recurring_score.group(1)))
 
 
 if __name__ == "__main__":

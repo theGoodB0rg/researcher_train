@@ -14,6 +14,9 @@ class Orchestrator:
         self.max_iterations = max_iterations
         self.interactive_pivots = interactive_pivots
         self._domain_shift_authorized_next_iteration = False
+        self._seen_scout_fingerprints: Dict[str, int] = {}
+        self._topic_history: List[str] = []
+        self._pivot_variant_index: Dict[str, int] = {}
         self.conversation_history: List[Dict[str, str]] = []
         self.iteration_count = 0
         self.research_results: Dict[str, object] = {}
@@ -23,6 +26,9 @@ class Orchestrator:
         self.conversation_history = []
         self.iteration_count = 0
         self._domain_shift_authorized_next_iteration = False
+        self._seen_scout_fingerprints = {}
+        self._topic_history = []
+        self._pivot_variant_index = {}
         self.research_results = {
             "topic": topic,
             "root_topic": None,
@@ -42,7 +48,8 @@ class Orchestrator:
     def run_round_table(self, initial_topic: str) -> Dict[str, object]:
         self._reset_run_state(topic=initial_topic)
         buyer_brief = self._parse_buyer_first_brief(initial_topic)
-        topic = buyer_brief.get("pain", initial_topic) if buyer_brief else initial_topic
+        topic = self._strip_search_modifiers(buyer_brief.get("pain", initial_topic) if buyer_brief else initial_topic)
+        self._topic_history.append(topic)
         root_topic = self._build_root_topic_seed(initial_topic=initial_topic, buyer_brief=buyer_brief, topic=topic)
         self.research_results["buyer_brief"] = buyer_brief
         self.research_results["root_topic"] = root_topic
@@ -115,9 +122,33 @@ class Orchestrator:
                 recovered_topic = self._recover_topic_after_no_data(topic=topic, topic_mode=topic_mode)
                 if recovered_topic != topic:
                     print(colored(f"[Orchestrator] No-data recovery: '{topic}' -> '{recovered_topic}'", "yellow"))
-                    topic = recovered_topic
+                    topic = self._strip_search_modifiers(recovered_topic)
                 continue
             consecutive_no_data = 0
+
+            scout_fingerprint = self._build_scout_fingerprint(scout_topic=scout_topic, scout_output=scout_output)
+            if self._is_repeated_scout_cycle(scout_fingerprint):
+                hard_gates = {
+                    "blocked": True,
+                    "issues": ["Loop gate failed: Scout evidence fingerprint repeated across iterations."],
+                    "pivot": "Repeated scout evidence - diversify persona/use-case before continuing",
+                }
+                self._append_iteration(
+                    topic,
+                    verdict="NO GO",
+                    topic_mode=topic_mode,
+                    scout_topic=scout_topic,
+                    scorecard=self._build_low_evidence_scorecard(scout_output),
+                    hard_gates=hard_gates,
+                )
+                print(colored("[Orchestrator] Repeated scout evidence detected. Forcing diversification pivot.", "red"))
+                topic = self._next_topic(
+                    current_topic=topic,
+                    pivot_instruction=hard_gates["pivot"],
+                    topic_mode=topic_mode,
+                    root_topic=root_topic,
+                )
+                continue
 
             if self._is_no_evidence_scout_output(scout_output):
                 opportunity = self._build_low_evidence_scorecard(scout_output)
@@ -487,6 +518,8 @@ class Orchestrator:
             return "Insufficient evidence - pivot to adjacent workflow pain point"
         if "willingness" in normalized or "won't pay" in normalized:
             return "Low willingness to pay - raise price point for high-value customers"
+        if "low frequency" in normalized or "rare usage" in normalized:
+            return "Low frequency B2C usage - pivot to B2B2C budget owner"
         if "feasib" in normalized or "unrealistic" in normalized:
             return "Sales feasibility too low - reduce MVP scope or pivot to easier customer acquisition"
         if "technical" in normalized:
@@ -501,8 +534,8 @@ class Orchestrator:
         root_topic: Optional[str] = None,
     ) -> str:
         active_mode = topic_mode or self._classify_topic_mode(current_topic)["mode"]
-        base_topic = self._normalize_topic_phrase(root_topic or current_topic)
-        current_topic = self._normalize_topic_phrase(current_topic)
+        base_topic = self._strip_search_modifiers(self._normalize_topic_phrase(root_topic or current_topic))
+        current_topic = self._strip_search_modifiers(self._normalize_topic_phrase(current_topic))
         lower_pivot = pivot_instruction.lower()
         if "different pain point" in lower_pivot or "saturated" in lower_pivot:
             self._domain_shift_authorized_next_iteration = True
@@ -512,27 +545,53 @@ class Orchestrator:
                 topic_mode=active_mode,
                 reason="SATURATED_MARKET",
             )
-            return self._normalize_topic_phrase(candidate)
+            return self._finalize_next_topic(candidate, current_topic=current_topic, root_topic=base_topic, topic_mode=active_mode)
         if "insufficient evidence" in lower_pivot or "no evidence" in lower_pivot:
             self._domain_shift_authorized_next_iteration = True
             recovered = self._recover_topic_after_no_data(topic=base_topic, topic_mode=active_mode)
-            return self._normalize_topic_phrase(recovered)
+            return self._finalize_next_topic(recovered, current_topic=current_topic, root_topic=base_topic, topic_mode=active_mode)
+        if "repeated scout evidence" in lower_pivot:
+            self._domain_shift_authorized_next_iteration = True
+            candidate = self._suggest_new_topic(
+                current_topic=current_topic,
+                root_topic=base_topic,
+                topic_mode=active_mode,
+                reason="REPEATED_SCOUT_EVIDENCE",
+            )
+            return self._finalize_next_topic(candidate, current_topic=current_topic, root_topic=base_topic, topic_mode=active_mode)
         if "budget owner" in lower_pivot:
             self._domain_shift_authorized_next_iteration = False
-            return self._merge_root_with_modifier(base_topic, "for budget-owning operators")
+            return self._finalize_next_topic(
+                self._merge_root_with_modifier(base_topic, "for budget-owning operators"),
+                current_topic=current_topic,
+                root_topic=base_topic,
+                topic_mode=active_mode,
+            )
         if "price point" in lower_pivot:
-            self._domain_shift_authorized_next_iteration = False
             if active_mode == "B2C_PLG":
-                return self._merge_root_with_modifier(base_topic, "for a narrower user segment with higher repeat usage")
-            return self._merge_root_with_modifier(base_topic, "for budget-owning operators")
-        if "willingness" in lower_pivot and active_mode == "B2C_PLG":
+                self._domain_shift_authorized_next_iteration = True
+                candidate = self._suggest_business_model_pivot(base_topic, reason="LOW_WILLINGNESS")
+                return self._finalize_next_topic(candidate, current_topic=current_topic, root_topic=base_topic, topic_mode=active_mode)
             self._domain_shift_authorized_next_iteration = False
-            return self._merge_root_with_modifier(base_topic, "with stronger activation and conversion hooks")
+            return self._finalize_next_topic(
+                self._merge_root_with_modifier(base_topic, "for budget-owning operators"),
+                current_topic=current_topic,
+                root_topic=base_topic,
+                topic_mode=active_mode,
+            )
+        if ("low frequency" in lower_pivot or "b2b2c" in lower_pivot) and active_mode == "B2C_PLG":
+            self._domain_shift_authorized_next_iteration = True
+            candidate = self._suggest_business_model_pivot(base_topic, reason="LOW_FREQUENCY")
+            return self._finalize_next_topic(candidate, current_topic=current_topic, root_topic=base_topic, topic_mode=active_mode)
+        if "willingness" in lower_pivot and active_mode == "B2C_PLG":
+            self._domain_shift_authorized_next_iteration = True
+            candidate = self._suggest_business_model_pivot(base_topic, reason="LOW_WILLINGNESS")
+            return self._finalize_next_topic(candidate, current_topic=current_topic, root_topic=base_topic, topic_mode=active_mode)
         self._domain_shift_authorized_next_iteration = False
         fallback = current_topic
         if self._is_generic_pivot(fallback):
             fallback = self._suggest_vertical_pivot(root_topic=base_topic, topic_mode=active_mode)
-        return self._normalize_topic_phrase(fallback)
+        return self._finalize_next_topic(fallback, current_topic=current_topic, root_topic=base_topic, topic_mode=active_mode)
 
     def _suggest_new_topic(
         self,
@@ -553,6 +612,11 @@ class Orchestrator:
 
         if reason.upper() == "SATURATED_MARKET":
             pivot = self._suggest_vertical_pivot(root_topic=base_topic, topic_mode=topic_mode)
+        elif reason.upper() == "REPEATED_SCOUT_EVIDENCE":
+            if topic_mode == "B2C_PLG":
+                pivot = self._suggest_vertical_pivot(root_topic=base_topic, topic_mode=topic_mode)
+            else:
+                pivot = self._merge_root_with_modifier(base_topic, "for a different workflow bottleneck")
         else:
             pivot = topic_pivots.get(base_topic.lower())
             if not pivot:
@@ -576,7 +640,7 @@ class Orchestrator:
         compacted = self._compact_topic_terms(topic)
 
         if topic_mode == "B2C_PLG":
-            recovered = f"{compacted} user complaints and switching triggers"
+            recovered = f"{compacted} for a narrower persona with recurring usage"
         elif topic_mode == "B2B_STRICT":
             recovered = f"{compacted} workflow bottlenecks"
         else:
@@ -686,7 +750,11 @@ class Orchestrator:
             pain = f"manual steps around {root}"
 
         if topic_mode == "B2C_PLG":
-            return f"{root} for a specific persona with explicit switching triggers"
+            variants = self._b2c_persona_variants(root=root, root_tokens=root_tokens)
+            key = root or "b2c_root"
+            index = self._pivot_variant_index.get(key, 0)
+            self._pivot_variant_index[key] = index + 1
+            return variants[index % len(variants)]
         return f"buyer: {buyer}; vertical: {vertical}; workflow: {workflow}; pain: {pain}"
 
     def _compact_topic_terms(self, topic: str, max_terms: int = 7) -> str:
@@ -708,10 +776,33 @@ class Orchestrator:
             "workflows",
             "pain",
             "points",
+            "a",
+            "an",
+            "specific",
+            "persona",
+            "explicit",
+            "switching",
+            "triggers",
+            "user",
+            "complaints",
+            "feature",
+            "features",
+            "requests",
+            "alternatives",
+            "narrower",
+            "segment",
+            "higher",
+            "repeat",
+            "usage",
+            "hooks",
+            "activation",
+            "conversion",
         }
         selected: List[str] = []
         seen = set()
         for token in tokens:
+            if len(token) <= 1:
+                continue
             if token in seen or token in stop_words:
                 continue
             seen.add(token)
@@ -719,6 +810,101 @@ class Orchestrator:
             if len(selected) >= max_terms:
                 break
         return " ".join(selected) if selected else " ".join(tokens[:max_terms])
+
+    def _strip_search_modifiers(self, topic: str) -> str:
+        text = re.sub(r"\s+", " ", (topic or "").strip()).lower()
+        if not text:
+            return text
+        patterns = [
+            r"\buser complaints\b",
+            r"\bfeature requests?\b",
+            r"\balternatives?\b",
+            r"\bswitching triggers?\b",
+            r"\bproblems complaints issues\b",
+        ]
+        cleaned = text
+        for pattern in patterns:
+            cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return self._normalize_topic_phrase(cleaned) if cleaned else text
+
+    def _build_scout_fingerprint(self, scout_topic: str, scout_output: str) -> str:
+        normalized_topic = " ".join(re.findall(r"[a-z0-9]+", (scout_topic or "").lower()))
+        urls = self._extract_urls(scout_output)
+        domains: List[str] = []
+        for url in urls:
+            domain_match = re.search(r"https?://([^/\s]+)", url, flags=re.IGNORECASE)
+            if not domain_match:
+                continue
+            domain = domain_match.group(1).lower().replace("www.", "")
+            domains.append(domain)
+            if len(domains) >= 3:
+                break
+        domain_part = ",".join(domains) if domains else "no-domain"
+        return f"{normalized_topic}|{domain_part}"
+
+    def _is_repeated_scout_cycle(self, fingerprint: str) -> bool:
+        count = self._seen_scout_fingerprints.get(fingerprint, 0) + 1
+        self._seen_scout_fingerprints[fingerprint] = count
+        return count > 1
+
+    def _suggest_business_model_pivot(self, root_topic: str, reason: str = "LOW_WILLINGNESS") -> str:
+        root = self._compact_topic_terms(root_topic, max_terms=7)
+        tokens = set(re.findall(r"[a-z0-9]+", root.lower()))
+        if tokens & {"appliance", "appliances", "home", "homeowner", "homeowners", "repair"}:
+            return (
+                "buyer: property managers; vertical: residential rentals; "
+                "workflow: appliance issue triage and vendor dispatch; "
+                "pain: repeated technician dispatch costs and tenant downtime"
+            )
+        if tokens & {"fitness", "workout", "coach"}:
+            return (
+                "buyer: gym operators; vertical: boutique fitness studios; "
+                "workflow: member issue triage and retention follow-up; "
+                "pain: churn from unresolved support issues"
+            )
+        return (
+            "buyer: operations leads; vertical: service businesses; "
+            f"workflow: recurring support triage around {root}; "
+            "pain: repeated manual support costs and delayed resolution"
+        )
+
+    def _b2c_persona_variants(self, root: str, root_tokens: set) -> List[str]:
+        if root_tokens & {"appliance", "appliances", "homeowner", "homeowners", "repair", "home"}:
+            return [
+                f"{root} for first-time homeowners facing urgent breakdowns",
+                f"{root} for landlords managing multiple rental units",
+                f"{root} for short-term rental hosts with guest-facing downtime",
+                f"{root} for home warranty claim coordinators",
+            ]
+        return [
+            f"{root} for first-time users with urgent needs",
+            f"{root} for prosumers with repeated weekly usage",
+            f"{root} for power users switching from manual workflows",
+            f"{root} for niche communities with high troubleshooting volume",
+        ]
+
+    def _finalize_next_topic(self, candidate: str, current_topic: str, root_topic: str, topic_mode: str) -> str:
+        normalized_candidate = self._strip_search_modifiers(self._normalize_topic_phrase(candidate))
+        normalized_current = self._strip_search_modifiers(self._normalize_topic_phrase(current_topic))
+        normalized_root = self._strip_search_modifiers(self._normalize_topic_phrase(root_topic))
+
+        history = set(self._topic_history)
+        if normalized_candidate and normalized_candidate != normalized_current and normalized_candidate not in history:
+            self._topic_history.append(normalized_candidate)
+            return normalized_candidate
+
+        fallback = self._suggest_new_topic(
+            current_topic=normalized_current,
+            root_topic=normalized_root,
+            topic_mode=topic_mode,
+            reason="REPEATED_SCOUT_EVIDENCE",
+        )
+        normalized_fallback = self._strip_search_modifiers(self._normalize_topic_phrase(fallback))
+        if not normalized_fallback or normalized_fallback == normalized_current:
+            normalized_fallback = self._merge_root_with_modifier(normalized_root, "for a different specific persona")
+        self._topic_history.append(normalized_fallback)
+        return normalized_fallback
 
     def _extract_data_failure_reason(self, scout_output: str) -> str:
         text = scout_output or ""

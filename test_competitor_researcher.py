@@ -32,6 +32,25 @@ class CompetitorResearcherParsingTests(unittest.TestCase):
         self.assertNotIn("pitch pitch", seed)
         self.assertIn("communimate", seed)
 
+    def test_market_saturation_requires_direct_product_evidence_for_red(self):
+        weak_competitors = [
+            {"name": "A", "domain": "a.com", "url": "https://a.com", "evidence_count": 1, "keyword_overlap": 1},
+            {"name": "B", "domain": "b.com", "url": "https://b.com", "evidence_count": 1, "keyword_overlap": 1},
+            {"name": "C", "domain": "c.com", "url": "https://c.com", "evidence_count": 1, "keyword_overlap": 1},
+        ]
+        findings = self.agent._build_findings("Idea", weak_competitors)
+        self.assertIn("YELLOW", str(findings["market_saturation"]))
+
+        strong_competitors = [
+            {"name": "A", "domain": "a.com", "url": "https://a.com", "evidence_count": 3, "keyword_overlap": 2},
+            {"name": "B", "domain": "b.com", "url": "https://b.com", "evidence_count": 2, "keyword_overlap": 2},
+            {"name": "C", "domain": "c.com", "url": "https://c.com", "evidence_count": 2, "keyword_overlap": 2},
+            {"name": "D", "domain": "d.com", "url": "https://d.com", "evidence_count": 2, "keyword_overlap": 2},
+        ]
+        strong_findings = self.agent._build_findings("Idea", strong_competitors)
+        self.assertIn("RED", str(strong_findings["market_saturation"]))
+        self.assertGreaterEqual(int(strong_findings.get("direct_competitor_count", 0)), 4)
+
 
 if __name__ == "__main__":
     unittest.main()

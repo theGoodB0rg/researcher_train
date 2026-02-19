@@ -11,12 +11,15 @@ class ScoutAgent(Agent):
 
     def process(self, input_data: str, context: List[Dict[str, str]] = None) -> str:
         # Extract scoped topic + research mode from orchestrator prompt.
-        topic = self._extract_topic(input_data)
+        raw_topic = self._extract_topic(input_data)
+        topic = self._strip_query_modifiers(raw_topic)
         research_mode = self._extract_research_mode(input_data)
         query_seed = self._build_query_seed(topic)
         
         # Collect data from real sources (Reddit, HackerNews, Web)
         print(f"[Scout] Collecting real data for: {topic}")
+        if raw_topic.strip().lower() != topic.strip().lower():
+            print(colored(f"[Scout] Topic sanitized: {raw_topic} -> {topic}", "yellow"))
         print(colored(f"[Scout] Research mode: {research_mode}", "yellow"))
         if query_seed.lower() != topic.lower():
             print(colored(f"[Scout] Query seed (compacted): {query_seed}", "cyan"))
@@ -104,7 +107,7 @@ class ScoutAgent(Agent):
             return match.group(1).upper()
         return "B2B_DISCOVERY"
 
-    def _build_query_seed(self, topic: str, max_terms: int = 7) -> str:
+    def _build_query_seed(self, topic: str, max_terms: int = 8) -> str:
         structured = self._extract_structured_focus(topic)
         if structured:
             return self._compact_focus_terms(structured, max_terms=12)
@@ -130,10 +133,33 @@ class ScoutAgent(Agent):
             "points",
             "related",
             "issues",
+            "specific",
+            "persona",
+            "explicit",
+            "switching",
+            "triggers",
+            "user",
+            "complaints",
+            "feature",
+            "features",
+            "requests",
+            "alternatives",
+            "narrower",
+            "segment",
+            "higher",
+            "repeat",
+            "usage",
+            "hooks",
+            "activation",
+            "conversion",
+            "a",
+            "an",
         }
         selected = []
         seen = set()
         for token in tokens:
+            if len(token) <= 1:
+                continue
             if token in seen or token in stop_words:
                 continue
             seen.add(token)
@@ -181,10 +207,18 @@ class ScoutAgent(Agent):
             "vertical",
             "workflow",
             "pain",
+            "specific",
+            "persona",
+            "switching",
+            "triggers",
+            "a",
+            "an",
         }
         selected = []
         seen = set()
         for token in tokens:
+            if len(token) <= 1:
+                continue
             if token in seen or token in stop_words:
                 continue
             seen.add(token)
@@ -192,6 +226,25 @@ class ScoutAgent(Agent):
             if len(selected) >= max_terms:
                 break
         return " ".join(selected) if selected else " ".join(tokens[:max_terms])
+
+    def _strip_query_modifiers(self, topic: str) -> str:
+        text = re.sub(r"\s+", " ", (topic or "").strip())
+        if not text:
+            return text
+        patterns = [
+            r"\buser complaints\b",
+            r"\bfeature requests?\b",
+            r"\balternatives?\b",
+            r"\bswitching triggers?\b",
+            r"\bfor a specific persona with explicit switching triggers\b",
+            r"\bfor a narrower user segment with higher repeat usage\b",
+            r"\bwith stronger activation and conversion hooks\b",
+        ]
+        cleaned = text
+        for pattern in patterns:
+            cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned or text
 
     def _collect_with_adaptive_strategy(self, topic: str, query_seed: str, research_mode: str) -> Dict[str, object]:
         strategies = self._build_strategy_plan(query_seed=query_seed, research_mode=research_mode)

@@ -48,6 +48,7 @@ class WillingnessToPayValidatorAgent(Agent):
         budget_fit = self._score_budget_fit(strategist_text)
         inaction_score = self._score_cost_of_inaction(pain_text)
         substitution_penalty = self._substitution_penalty(pain_text, competitor_text)
+        usage_fit = self._score_usage_frequency_fit(strategist_text=strategist_text, pain_text=pain_text)
 
         composite_score = self._composite_score(
             direct_score=direct_score,
@@ -56,6 +57,7 @@ class WillingnessToPayValidatorAgent(Agent):
             budget_fit=budget_fit,
             inaction_score=inaction_score,
             substitution_penalty=substitution_penalty,
+            usage_fit=usage_fit,
             has_direct_signals=bool(direct_signals),
             competitor_anchor=competitor_anchor,
         )
@@ -66,6 +68,15 @@ class WillingnessToPayValidatorAgent(Agent):
             competitor_anchor=competitor_anchor,
             market_proof=market_proof,
             strategist_text=strategist_text,
+            usage_fit=usage_fit,
+        )
+        score_drivers = self._score_driver_notes(
+            pricing_fit=pricing_fit,
+            market_proof=market_proof,
+            budget_fit=budget_fit,
+            inaction_score=inaction_score,
+            substitution_penalty=substitution_penalty,
+            usage_fit=usage_fit,
         )
 
         output = self._format_output(
@@ -79,7 +90,9 @@ class WillingnessToPayValidatorAgent(Agent):
             budget_fit=budget_fit,
             inaction_score=inaction_score,
             substitution_penalty=substitution_penalty,
+            usage_fit=usage_fit,
             confidence=confidence,
+            score_drivers=score_drivers,
         )
 
         self.speak(output)
@@ -203,31 +216,34 @@ class WillingnessToPayValidatorAgent(Agent):
     def _score_market_proof(self, competitor_prices: List[float], competitor_text: str) -> float:
         competitor_count = self._estimate_competitor_count(competitor_text)
         saturation = self._extract_market_saturation(competitor_text)
+        direct_evidence_count = self._extract_direct_competitor_evidence_count(competitor_text)
 
         if not competitor_prices:
-            if competitor_count >= 8:
-                base = 52.0
-            elif competitor_count >= 4:
-                base = 45.0
-            elif competitor_count >= 1:
-                base = 38.0
+            if direct_evidence_count >= 5:
+                base = 70.0
+            elif direct_evidence_count >= 3:
+                base = 60.0
+            elif direct_evidence_count >= 1:
+                base = 48.0
             else:
-                base = 30.0
+                base = 32.0
             if saturation == "RED":
-                base -= 4.0
+                base -= 12.0
             elif saturation == "YELLOW":
                 base += 4.0
             elif saturation == "GREEN":
-                base += 10.0
+                base += 8.0
+            if competitor_count >= 8 and direct_evidence_count <= 1:
+                base -= 8.0
             return max(20.0, min(85.0, base))
 
-        base = min(90.0, 55.0 + (8.0 * len(competitor_prices)))
+        base = min(92.0, 62.0 + (6.0 * len(competitor_prices)) + (4.0 * direct_evidence_count))
         if saturation == "RED":
-            base -= 10.0
+            base -= 8.0
         elif saturation == "YELLOW":
             base += 2.0
         elif saturation == "GREEN":
-            base += 8.0
+            base += 6.0
         return max(20.0, min(95.0, base))
 
     def _estimate_competitor_count(self, competitor_text: str) -> int:
@@ -250,6 +266,24 @@ class WillingnessToPayValidatorAgent(Agent):
         if "RED" in upper:
             return "RED"
         return "UNKNOWN"
+
+    def _extract_direct_competitor_evidence_count(self, competitor_text: str) -> int:
+        text = competitor_text or ""
+        direct_match = re.search(
+            r"Direct Product Evidence Count\s*:\s*(\d+)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if direct_match:
+            return int(direct_match.group(1))
+
+        evidence_hits = [
+            int(value)
+            for value in re.findall(r"Evidence hits\s*:\s*(\d+)", text, flags=re.IGNORECASE)
+        ]
+        if evidence_hits:
+            return sum(1 for value in evidence_hits if value >= 2)
+        return 0
 
     def _score_budget_fit(self, strategist_text: str) -> float:
         text = strategist_text.lower()
@@ -301,6 +335,42 @@ class WillingnessToPayValidatorAgent(Agent):
                 penalty += 4.0
         return max(0.0, min(24.0, penalty))
 
+    def _score_usage_frequency_fit(self, strategist_text: str, pain_text: str) -> float:
+        text = f"{strategist_text}\n{pain_text}".lower()
+        high_terms = [
+            "daily",
+            "weekly",
+            "monthly",
+            "recurring",
+            "repeat usage",
+            "ongoing",
+            "continuous",
+            "every day",
+            "every week",
+        ]
+        low_terms = [
+            "once a year",
+            "yearly",
+            "rarely",
+            "seasonal",
+            "one-off",
+            "sporadic",
+            "occasional",
+            "as needed",
+            "emergency",
+        ]
+        score = 50.0
+        score += 8.0 * sum(1 for term in high_terms if term in text)
+        score -= 10.0 * sum(1 for term in low_terms if term in text)
+
+        consumer_terms = ["homeowner", "homeowners", "consumer", "household"]
+        operator_terms = ["property manager", "landlord", "operations", "warranty", "portfolio"]
+        if any(term in text for term in consumer_terms) and any(term in text for term in low_terms):
+            score -= 8.0
+        if any(term in text for term in operator_terms):
+            score += 8.0
+        return max(10.0, min(95.0, score))
+
     def _composite_score(
         self,
         direct_score: float,
@@ -309,35 +379,39 @@ class WillingnessToPayValidatorAgent(Agent):
         budget_fit: float,
         inaction_score: float,
         substitution_penalty: float,
+        usage_fit: float,
         has_direct_signals: bool,
         competitor_anchor: Optional[float],
     ) -> float:
         if has_direct_signals:
             weights = {
                 "direct": 0.20,
-                "pricing": 0.25,
-                "market": 0.20,
-                "budget": 0.15,
-                "inaction": 0.15,
+                "pricing": 0.21,
+                "market": 0.18,
+                "budget": 0.12,
+                "inaction": 0.14,
+                "usage": 0.10,
                 "substitution": 0.05,
             }
         elif competitor_anchor is not None or market_proof >= 65.0:
             # Avoid over-penalizing the common "no quote" case when real market pricing exists.
             weights = {
-                "direct": 0.05,
-                "pricing": 0.30,
-                "market": 0.30,
-                "budget": 0.15,
-                "inaction": 0.15,
+                "direct": 0.03,
+                "pricing": 0.27,
+                "market": 0.25,
+                "budget": 0.13,
+                "inaction": 0.17,
+                "usage": 0.10,
                 "substitution": 0.05,
             }
         else:
             weights = {
-                "direct": 0.15,
-                "pricing": 0.25,
-                "market": 0.20,
-                "budget": 0.15,
+                "direct": 0.10,
+                "pricing": 0.20,
+                "market": 0.18,
+                "budget": 0.13,
                 "inaction": 0.20,
+                "usage": 0.14,
                 "substitution": 0.05,
             }
 
@@ -347,12 +421,15 @@ class WillingnessToPayValidatorAgent(Agent):
             + (weights["market"] * market_proof)
             + (weights["budget"] * budget_fit)
             + (weights["inaction"] * inaction_score)
+            + (weights["usage"] * usage_fit)
             + (weights["substitution"] * (100.0 - substitution_penalty))
         )
 
         # Explicit anchors widen score spread to avoid constant-midband outcomes.
-        if market_proof >= 80.0 and pricing_fit >= 80.0 and budget_fit >= 68.0 and inaction_score >= 50.0:
-            base = max(base, 72.0)
+        if market_proof >= 78.0 and pricing_fit >= 78.0 and budget_fit >= 68.0 and usage_fit >= 65.0:
+            base = max(base, 74.0)
+        if usage_fit <= 30.0 and substitution_penalty >= 12.0 and direct_score < 30.0:
+            base = min(base, 38.0)
         if pricing_fit <= 20.0 and market_proof <= 40.0 and substitution_penalty >= 12.0:
             base = min(base, 35.0)
         return max(0.0, min(100.0, base))
@@ -372,6 +449,7 @@ class WillingnessToPayValidatorAgent(Agent):
         competitor_anchor: Optional[float],
         market_proof: float,
         strategist_text: str,
+        usage_fit: float,
     ) -> float:
         confidence = 45.0
         if direct_signals:
@@ -380,9 +458,43 @@ class WillingnessToPayValidatorAgent(Agent):
             confidence += 20.0
         if market_proof >= 75.0:
             confidence += 10.0
+        if usage_fit <= 30.0 or usage_fit >= 70.0:
+            confidence += 5.0
         if "budget owner" in strategist_text.lower():
             confidence += 10.0
         return max(30.0, min(95.0, confidence))
+
+    def _score_driver_notes(
+        self,
+        pricing_fit: float,
+        market_proof: float,
+        budget_fit: float,
+        inaction_score: float,
+        substitution_penalty: float,
+        usage_fit: float,
+    ) -> List[str]:
+        notes: List[str] = []
+        if pricing_fit >= 75:
+            notes.append("pricing_fit_strong")
+        elif pricing_fit <= 40:
+            notes.append("pricing_fit_weak")
+        if market_proof >= 70:
+            notes.append("market_proof_strong")
+        elif market_proof <= 40:
+            notes.append("market_proof_weak")
+        if budget_fit >= 70:
+            notes.append("buyer_budget_fit_strong")
+        if inaction_score >= 60:
+            notes.append("inaction_cost_high")
+        elif inaction_score <= 38:
+            notes.append("inaction_cost_low")
+        if usage_fit <= 35:
+            notes.append("usage_frequency_low")
+        elif usage_fit >= 70:
+            notes.append("usage_frequency_high")
+        if substitution_penalty >= 12:
+            notes.append("substitution_pressure_high")
+        return notes
 
     def _format_output(
         self,
@@ -396,7 +508,9 @@ class WillingnessToPayValidatorAgent(Agent):
         budget_fit: float,
         inaction_score: float,
         substitution_penalty: float,
+        usage_fit: float,
         confidence: float,
+        score_drivers: List[str],
     ) -> str:
         lines = [
             f"1. Price Willingness Score: {score:.0f}%",
@@ -425,9 +539,17 @@ class WillingnessToPayValidatorAgent(Agent):
                 f"   - Market proof score: {market_proof:.0f}/100",
                 f"   - Buyer budget fit score: {budget_fit:.0f}/100",
                 f"   - Cost-of-inaction score: {inaction_score:.0f}/100",
+                f"   - Usage frequency fit score: {usage_fit:.0f}/100",
                 f"   - Substitution pressure penalty: {substitution_penalty:.0f}/24",
                 "",
                 f"4. Recommendation: {recommendation}",
+                "",
+                "5. Score Drivers:",
+                (
+                    "   - " + ", ".join(score_drivers)
+                    if score_drivers
+                    else "   - neutral_mix"
+                ),
                 "",
                 f"Composite confidence: {confidence:.0f}% | Analysis Date: {datetime.now().isoformat()}",
             ]

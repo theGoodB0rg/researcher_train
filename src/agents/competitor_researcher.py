@@ -182,31 +182,36 @@ class CompetitorResearcherAgent(Agent):
         }
 
     def _build_findings(self, idea_name: str, competitors: List[Dict[str, object]]) -> Dict[str, object]:
-        strong_competitors = [item for item in competitors if int(item.get("evidence_count", 0)) >= 2]
+        direct_competitors = [
+            item
+            for item in competitors
+            if int(item.get("evidence_count", 0)) >= 2 or int(item.get("keyword_overlap", 0)) >= 2
+        ]
         competitor_count = len(competitors)
-        strong_count = len(strong_competitors)
+        direct_count = len(direct_competitors)
 
         if competitor_count == 0:
             market_saturation = "GREEN - No direct competitors found in search evidence"
             recommendation = "Proceed, but validate demand directly with interviews."
             confidence = 0.45
-        elif strong_count >= 5 or competitor_count >= 8:
+        elif direct_count >= 4:
             market_saturation = "RED - Crowded landscape"
             recommendation = "Pivot positioning or customer segment before building."
             confidence = 0.82
-        elif competitor_count <= 6:
+        elif direct_count >= 2 or competitor_count >= 3:
             market_saturation = "YELLOW - Low to moderate competition"
             recommendation = "Proceed with clear differentiation and niche focus."
             confidence = 0.75
         else:
-            market_saturation = "YELLOW - Moderate competition"
-            recommendation = "Proceed only with clear wedge and measurable user pull."
-            confidence = 0.78
+            market_saturation = "GREEN - Sparse direct competition"
+            recommendation = "Proceed and validate with sharp persona-specific wedge."
+            confidence = 0.68
 
         return {
             "idea": idea_name,
             "researched_at": datetime.now().isoformat(),
             "competitors": competitors,
+            "direct_competitor_count": direct_count,
             "market_saturation": market_saturation,
             "confidence": confidence,
             "recommendation": recommendation,
@@ -219,6 +224,7 @@ class CompetitorResearcherAgent(Agent):
             "==========================\n"
             f"Idea: {findings['idea']}\n"
             f"Market Saturation: {findings['market_saturation']}\n"
+            f"Direct Product Evidence Count: {findings.get('direct_competitor_count', 0)}\n"
             f"Analysis Confidence: {findings['confidence']:.0%}\n"
             f"Recommendation: {findings['recommendation']}\n\n"
             f"Competitors Found ({len(competitors)}):\n"

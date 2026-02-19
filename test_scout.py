@@ -50,6 +50,26 @@ class ScoutQuerySeedTests(unittest.TestCase):
         self.assertNotIn("buyer", lowered)
         self.assertNotIn("vertical", lowered)
 
+    def test_query_seed_ignores_modifier_noise_and_single_char_tokens(self):
+        scout = ScoutAgent("Trend Scout", "Researcher", "test prompt")
+        cleaned = scout._strip_query_modifiers(
+            "home appliance troubleshooting for a specific persona with explicit switching triggers user complaints feature requests alternatives"
+        )
+        seed = scout._build_query_seed(cleaned)
+        lowered = seed.lower()
+        self.assertNotIn("persona", lowered)
+        self.assertNotIn("switching", lowered)
+        self.assertNotIn(" a ", f" {lowered} ")
+
+    def test_strip_query_modifiers_removes_scout_suffixes(self):
+        scout = ScoutAgent("Trend Scout", "Researcher", "test prompt")
+        cleaned = scout._strip_query_modifiers(
+            "portfolio tooling user complaints feature requests alternatives"
+        )
+        lowered = cleaned.lower()
+        self.assertNotIn("user complaints", lowered)
+        self.assertNotIn("feature requests", lowered)
+
 
 if __name__ == "__main__":
     unittest.main()

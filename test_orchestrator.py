@@ -95,15 +95,17 @@ class OrchestratorHardeningTests(unittest.TestCase):
         self.assertTrue(gates["blocked"])
         self.assertIn("Price floor gate failed", gates["issues"][0])
 
-    def test_next_topic_price_pivot_for_b2c_stays_plg(self):
+    def test_next_topic_price_pivot_for_b2c_pivots_business_model(self):
         orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
         next_topic = orchestrator._next_topic(
-            current_topic="portfolio website maker using resume or linkedin profile",
+            current_topic="home appliance inventory and troubleshooting assistant for homeowners",
             pivot_instruction="Low willingness to pay - raise price point for high-value customers",
             topic_mode="B2C_PLG",
         )
-        self.assertNotIn("compliance", next_topic.lower())
-        self.assertIn("narrower user segment", next_topic.lower())
+        lowered = next_topic.lower()
+        self.assertIn("buyer:", lowered)
+        self.assertIn("property managers", lowered)
+        self.assertIn("workflow:", lowered)
 
     def test_next_topic_price_pivot_for_b2b_keeps_budget_owner_direction(self):
         orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
@@ -336,6 +338,25 @@ class OrchestratorHardeningTests(unittest.TestCase):
         first_iteration = results["iterations"][0]
         self.assertIn("staffing agencies", first_iteration["scout_topic"].lower())
         self.assertIn("candidate intake", first_iteration["scout_topic"].lower())
+
+    def test_strip_search_modifiers_removes_prompt_suffixes(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        cleaned = orchestrator._strip_search_modifiers(
+            "home appliance troubleshooting user complaints feature requests alternatives"
+        )
+        lowered = cleaned.lower()
+        self.assertNotIn("user complaints", lowered)
+        self.assertNotIn("feature requests", lowered)
+        self.assertNotIn("alternatives", lowered)
+
+    def test_repeated_scout_fingerprint_detected_on_second_occurrence(self):
+        orchestrator = Orchestrator({}, max_iterations=1, interactive_pivots=False)
+        fingerprint = orchestrator._build_scout_fingerprint(
+            scout_topic="home appliance troubleshooting user complaints",
+            scout_output="1. URL: https://example.com/post-a\n2. URL: https://example.com/post-b",
+        )
+        self.assertFalse(orchestrator._is_repeated_scout_cycle(fingerprint))
+        self.assertTrue(orchestrator._is_repeated_scout_cycle(fingerprint))
 
 
 if __name__ == "__main__":

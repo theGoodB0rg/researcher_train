@@ -54,6 +54,7 @@ Constraints:
 - Must target B2B buyers with budget authority (owner, ops lead, admin/finance lead).
 - Price floor: prefer $150-$500/month so $5k MRR can be reached with realistic customer counts.
 - If research mode is B2C_PLG, switch to self-serve PLG logic ($5-$80/month) and volume-based path to $5k MRR.
+- If B2C demand is low-frequency or weak willingness-to-pay, propose a business-model pivot (B2B2C/B2B operator buyer) instead of only feature tweaks.
 - No reliance on massive network effects (like "Create a new LinkedIn").
 - NO PAID ADS BUDGET: Acquisition must be founder-driven (network, outreach, communities).
 Output format:
@@ -142,6 +143,7 @@ Output format:
 4. **If NO GO**: What should we pivot? (market saturation? price? audience? feature scope?)
    - If SATURATED_MARKET: "Return to Scout - Find different pain point"
    - If LOW_WILLINGNESS: "Return to Strategist - Raise price point for high-value customers"
+   - If LOW_FREQUENCY_B2C: "Return to Strategist - Pivot business model to B2B2C/B2B budget owner"
    - If UNFEASIBLE_SALES: "Return to Strategist - Reduce MVP scope or raise price"
    - If TECHNICAL_RISK: "Return to Strategist - Simplify feature set"
 """
