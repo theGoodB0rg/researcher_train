@@ -121,9 +121,30 @@ class IntakeRouterAgent(Agent):
 
     def process(self, input_data: str, context: Optional[List[Dict[str, str]]] = None) -> str:
         raw_request = self._extract_user_request(input_data)
-        plan = self._build_plan(raw_request)
+        
+        fallback_request = raw_request
+        if context:
+            user_messages = [msg["content"] for msg in context if msg["role"] == "user"]
+            if user_messages:
+                accumulated_text = " ".join(user_messages)
+                if raw_request not in accumulated_text:
+                    fallback_request = f"{accumulated_text} {raw_request}"
+
+        if self.client:
+            reply = super().process(input_data, context=context)
+            try:
+                json_match = re.search(r'\{.*\}', reply, re.DOTALL)
+                if json_match:
+                    plan = json.loads(json_match.group(0))
+                    if "intent" in plan:
+                        return json.dumps(plan, indent=2)
+            except Exception:
+                pass
+                    
+        plan = self._build_plan(fallback_request)
         output = json.dumps(plan, indent=2)
-        self.speak(output)
+        if not self.client:
+            self.speak(output)
         return output
 
     def _extract_user_request(self, input_data: str) -> str:
