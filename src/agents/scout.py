@@ -18,6 +18,9 @@ class ScoutAgent(Agent):
         query_seed_source = query_seed_hint or topic
         query_seed = self._build_query_seed(query_seed_source)
         
+        # Extract explicit generated queries from Orchestrator context if provided
+        explicit_queries = self._extract_generated_queries(input_data)
+        
         # Collect data from real sources (Reddit, HackerNews, Web)
         print(f"[Scout] Collecting real data for: {topic}")
         if raw_topic.strip().lower() != topic.strip().lower():
@@ -31,6 +34,7 @@ class ScoutAgent(Agent):
             topic=topic,
             query_seed=query_seed,
             research_mode=research_mode,
+            explicit_queries=explicit_queries,
         )
         
         # Check data quality
@@ -110,6 +114,22 @@ class ScoutAgent(Agent):
         if match:
             return match.group(1).upper()
         return "B2B_DISCOVERY"
+
+    def _extract_generated_queries(self, input_data: str) -> List[str]:
+        # This will be injected by the Orchestrator via context/prompt manipulation
+        match = re.search(r"\[GENERATED QUERIES\](.*?)\[END QUERIES\]", input_data, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            queries_str = match.group(1).strip()
+            # If it looks like a python string representation of a list
+            if queries_str.startswith("[") and queries_str.endswith("]"):
+                try:
+                    import ast
+                    return ast.literal_eval(queries_str)
+                except:
+                    pass
+            # Fallback split by lines
+            return [q.strip() for q in queries_str.splitlines() if q.strip()]
+        return []
 
     def _extract_query_seed_hint(self, input_data: str) -> str:
         match = re.search(r"Query seed hint\s*:\s*(.+)", input_data, flags=re.IGNORECASE)
@@ -256,8 +276,8 @@ class ScoutAgent(Agent):
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         return cleaned or text
 
-    def _collect_with_adaptive_strategy(self, topic: str, query_seed: str, research_mode: str) -> Dict[str, object]:
-        strategies = self._build_strategy_plan(query_seed=query_seed, research_mode=research_mode)
+    def _collect_with_adaptive_strategy(self, topic: str, query_seed: str, research_mode: str, explicit_queries: List[str] = None) -> Dict[str, object]:
+        strategies = self._build_strategy_plan(query_seed=query_seed, research_mode=research_mode, explicit_queries=explicit_queries)
 
         fallback_result = None
         for index, strategy in enumerate(strategies, start=1):
@@ -292,10 +312,23 @@ class ScoutAgent(Agent):
             "error": "Adaptive retrieval failed",
         }
 
-    def _build_strategy_plan(self, query_seed: str, research_mode: str) -> List[Dict[str, Any]]:
+    def _build_strategy_plan(self, query_seed: str, research_mode: str, explicit_queries: List[str] = None) -> List[Dict[str, Any]]:
         mode = (research_mode or "").upper()
+        
+        # If we have explicit, highly-targeted queries from the Intake Router, make that Strategy 1
+        explicit_plan = []
+        if explicit_queries:
+             explicit_plan = [{
+                 "label": "explicit_generated_queries",
+                 "query": query_seed, # Used as topic context
+                 "threshold": None,
+                 "source_query_overrides": {
+                     "all": explicit_queries
+                 }
+             }]
+
         if mode == "B2C_PLG":
-            return [
+            return explicit_plan + [
                 {
                     "label": "user_frustrations",
                     "query": f"{query_seed} user complaints frustrations reddit forum",

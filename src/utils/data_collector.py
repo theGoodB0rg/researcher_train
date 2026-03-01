@@ -3,6 +3,7 @@ Unified real-data collection pipeline with modular source providers.
 Includes source-quality scoring and filtering before data reaches agents.
 """
 
+import concurrent.futures
 import re
 from datetime import datetime
 from collections import Counter
@@ -12,7 +13,10 @@ from urllib.parse import urlparse
 from src.utils.console import colored
 
 from src.config import get_settings
-from src.sources import HackerNewsSource, RedditSource, SourceProvider, WebSource
+from src.sources import HackerNewsSource, RedditSource, SourceProvider, WebSource, GitHubSource
+from src.utils.search.ddg_client import DuckDuckGoClient
+from src.utils.search.hn_client import HackerNewsClient
+from src.utils.search.youtube_client import YouTubeClient
 
 
 class DataCollector:
@@ -27,6 +31,9 @@ class DataCollector:
         else:
             print(colored("[DataCollector] Reddit source disabled via ENABLE_REDDIT_SOURCE=false", "yellow"))
         providers.append(HackerNewsSource())
+        from src.sources.youtube_source import YouTubeSource
+        providers.append(YouTubeSource())
+        providers.append(GitHubSource())
         providers.append(WebSource())
         return providers
 
@@ -54,7 +61,7 @@ class DataCollector:
 
         per_source_limit = max(1, limit // len(self.providers))
 
-        for provider in self.providers:
+        def collect_from_provider(provider: SourceProvider) -> Dict[str, Any]:
             query_variants = self._resolve_query_variants(
                 query=query,
                 topic=topic,
@@ -68,47 +75,61 @@ class DataCollector:
                 query_variants=query_variants,
                 limit=per_source_limit,
             )
-            attempted_queries = [entry.get("query", "") for entry in attempt_logs]
-            last_error = None
-            for attempt in reversed(attempt_logs):
-                if attempt.get("status") == "error" and attempt.get("error"):
-                    last_error = attempt["error"]
-                    break
+            return {"provider": provider, "records": records, "attempt_logs": attempt_logs}
 
-            status = "ok" if records else "failed"
-            source_diagnostics[provider.source_type] = {
-                "provider": provider.name,
-                "status": status,
-                "raw_records": len(records),
-                "results": len(records),
-                "attempted_queries": attempted_queries,
-                "query_attempts": attempt_logs,
-                "error": last_error,
-                "accepted_records": 0,
-                "dropped_low_quality": 0,
-                "avg_quality_score": 0.0,
-                "quality_rejection_reasons": {},
-                "quality_acceptance_signals": {},
-            }
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(self.providers)) as executor:
+            future_to_provider = {executor.submit(collect_from_provider, p): p for p in self.providers}
+            
+            for future in concurrent.futures.as_completed(future_to_provider):
+                provider = future_to_provider[future]
+                try:
+                    res = future.result()
+                    records = res["records"]
+                    attempt_logs = res["attempt_logs"]
 
-            if not records:
-                print(
-                    colored(
-                        f"[DataCollector] {provider.name}: 0 results after {len(attempted_queries)} query attempts",
-                        "yellow",
+                    attempted_queries = [entry.get("query", "") for entry in attempt_logs]
+                    last_error = None
+                    for attempt in reversed(attempt_logs):
+                        if attempt.get("status") == "error" and attempt.get("error"):
+                            last_error = attempt["error"]
+                            break
+
+                    status = "ok" if records else "failed"
+                    source_diagnostics[provider.source_type] = {
+                        "provider": provider.name,
+                        "status": status,
+                        "raw_records": len(records),
+                        "results": len(records),
+                        "attempted_queries": attempted_queries,
+                        "query_attempts": attempt_logs,
+                        "error": last_error,
+                        "accepted_records": 0,
+                        "dropped_low_quality": 0,
+                        "avg_quality_score": 0.0,
+                        "quality_rejection_reasons": {},
+                        "quality_acceptance_signals": {},
+                    }
+
+                    if not records:
+                        print(
+                            colored(
+                                f"[DataCollector] {provider.name}: 0 results after {len(attempted_queries)} query attempts",
+                                "yellow",
+                            )
+                        )
+                        if last_error:
+                            print(colored(f"[DataCollector] {provider.name} last error: {last_error}", "yellow"))
+                        continue
+
+                    aggregated.extend(records)
+                    print(
+                        colored(
+                            f"[DataCollector] {provider.name}: {len(records)} results after {len(attempted_queries)} query attempts",
+                            "green",
+                        )
                     )
-                )
-                if last_error:
-                    print(colored(f"[DataCollector] {provider.name} last error: {last_error}", "yellow"))
-                continue
-
-            aggregated.extend(records)
-            print(
-                colored(
-                    f"[DataCollector] {provider.name}: {len(records)} results after {len(attempted_queries)} query attempts",
-                    "green",
-                )
-            )
+                except Exception as exc:
+                    print(colored(f"[DataCollector] {provider.name} generated an exception: {exc}", "red"))
 
         if not aggregated:
             return self._no_data_response(
@@ -352,7 +373,19 @@ class DataCollector:
         source_type: str,
         source_query_overrides: Optional[Dict[str, List[str]]] = None,
     ) -> List[str]:
+        # Overrides now come explicitly from the LLM (e.g. ['site:reddit.com "invoice problem"'])
         overrides = source_query_overrides or {}
+        
+        # If we have explicit generated queries for *all* sources (from IntakeRouter), use them.
+        # We pass them keyed by "all" from the ScoutAgent.
+        explicit_queries = overrides.get("all", [])
+        if explicit_queries:
+            variants = self._normalize_query_list([query] + explicit_queries)
+            if source_type == "web":
+                return self._apply_topic_disambiguation(variants, topic=topic)
+            return variants
+
+        # Legacy fallback if no explicit generated queries are provided
         override_queries = overrides.get(source_type, [])
         if override_queries:
             variants = self._normalize_query_list([query] + override_queries)
@@ -580,7 +613,8 @@ class DataCollector:
         mode = (mode_hint or "").upper()
 
         notes: List[str] = []
-        score = {"reddit": 0.82, "hackernews": 0.76, "web": 0.42}.get(source_type, 0.4)
+        # Score GitHub slightly lower initially to let the LLM judge technical relevance
+        score = {"reddit": 0.82, "hackernews": 0.76, "github": 0.65, "web": 0.42}.get(source_type, 0.4)
 
         full_text = f"{title} {text} {url}".lower()
         text_tokens = set(re.findall(r"[a-z0-9]+", full_text))

@@ -5,3 +5,5 @@ colorama
 termcolor
 praw
 requests
+streamlit
+youtube-transcript-api

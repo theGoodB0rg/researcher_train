@@ -64,13 +64,17 @@ class Orchestrator:
             "pain": intake_plan.get("pain", ""),
             "constraints": intake_plan.get("constraints", []),
             "assumptions": intake_plan.get("assumptions", []),
+            "generated_search_queries": intake_plan.get("generated_search_queries", []),
             "confidence": intake_plan.get("confidence", 0.0),
             "clarification_needed": intake_plan.get("clarification_needed", False),
         }
         self.broadcast("Intake Plan", json.dumps(compact_plan))
 
-    def run_round_table(self, initial_topic: str) -> Dict[str, object]:
+    def run_round_table(self, initial_topic: str, context: Optional[List[Dict[str, str]]] = None) -> Dict[str, object]:
         self._reset_run_state(topic=initial_topic)
+        if context:
+            self.conversation_history = context
+
         intake_output = self._run_optional_agent(
             "Intake Router",
             f"Route and normalize this research request:\n{initial_topic}",
@@ -110,6 +114,22 @@ class Orchestrator:
             or (buyer_brief.get("pain", initial_topic) if buyer_brief else initial_topic)
         )
         intake_intent = str(intake_plan.get("intent", "MARKET_DISCOVERY")).upper().strip()
+        
+        needs_clarification = not self.interactive_pivots and intake_plan.get("clarification_needed")
+        
+        if intake_intent == "CONVERSATIONAL" or needs_clarification:
+            print(colored("\n[Orchestrator] Conversational or Clarification intent detected. Skipping research loop.", "cyan"))
+            
+            chat_output = self._run_optional_agent("Chat Bot", initial_topic)
+            if not chat_output:
+                chat_output = intake_plan.get("clarification_question", "How can I help you refine this idea?")
+            
+            self.research_results["intent"] = "CONVERSATIONAL"
+            self.research_results["final_verdict"] = "CONVERSATIONAL"
+            self.research_results["final_recommendation"] = chat_output.replace("[MOCK OUTPUT]", "").strip()
+            self._seed_iteration_context(raw_brief=initial_topic, intake_plan=intake_plan)
+            return self.research_results
+
         intake_mode_hint = str(intake_plan.get("research_mode", "")).upper()
         intake_query_seed_hint = str(intake_plan.get("query_seed", "")).strip()
         self._topic_history.append(topic)
@@ -170,6 +190,10 @@ class Orchestrator:
             scout_prompt = f"Find complaints and issues related to: {scout_topic}\nResearch mode: {topic_mode}"
             if iteration == 1 and intake_query_seed_hint:
                 scout_prompt += f"\nQuery seed hint: {intake_query_seed_hint}"
+                
+            generated_queries = intake_plan.get("generated_search_queries")
+            if iteration == 1 and generated_queries:
+                 scout_prompt += f"\n\n[GENERATED QUERIES]\n{generated_queries}\n[END QUERIES]"
 
             scout_output = self._run_agent(
                 "Trend Scout",
@@ -777,6 +801,11 @@ class Orchestrator:
             value = parsed.get(key)
             if isinstance(value, str):
                 plan[key] = value.strip()
+                
+        # Handle the new generated_search_queries array
+        generated_queries = parsed.get("generated_search_queries")
+        if isinstance(generated_queries, list):
+             plan["generated_search_queries"] = [str(q).strip() for q in generated_queries if str(q).strip()]
 
         for key in ["constraints", "assumptions", "must_include_terms", "must_exclude_terms", "source_priority"]:
             value = parsed.get(key)
@@ -807,7 +836,7 @@ class Orchestrator:
         if not plan.get("summary"):
             plan["summary"] = (plan["normalized_topic"] or raw_topic)[:260]
         intent = str(plan.get("intent", "MARKET_DISCOVERY")).upper().strip()
-        if intent not in {"FEASIBILITY_REVIEW", "MARKET_DISCOVERY", "IDEA_SYNTHESIS"}:
+        if intent not in {"FEASIBILITY_REVIEW", "MARKET_DISCOVERY", "IDEA_SYNTHESIS", "CONVERSATIONAL"}:
             intent = "MARKET_DISCOVERY"
         plan["intent"] = intent
 

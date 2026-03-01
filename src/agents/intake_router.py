@@ -254,6 +254,11 @@ class IntakeRouterAgent(Agent):
         lowered = (raw_request or "").lower()
         if explicit_structured:
             return "MARKET_DISCOVERY"
+        
+        conversational_terms = {"hi", "hello", "hey", "how are you", "who are you", "what can you do", "brainstorm", "testing", "test", "conversational"}
+        if not buyer and not workflow and not pain and len(lowered.split()) < 20:
+            if any(term in lowered.split() for term in conversational_terms) or len(lowered.split()) <= 10:
+                return "CONVERSATIONAL"
 
         feasibility_terms = {
             "feasibility",
@@ -781,6 +786,8 @@ class IntakeRouterAgent(Agent):
         return []
 
     def _clarification(self, raw: str, buyer: str, workflow: str, pain: str, intent: str) -> Tuple[bool, str]:
+        if intent == "CONVERSATIONAL":
+            return True, "Hello! I'm your AI Research Co-Founder. Tell me about a specific audience (like 'plumbers') or a workflow you want to investigate."
         if intent == "FEASIBILITY_REVIEW":
             return False, ""
         lowered = (raw or "").lower()
@@ -799,13 +806,13 @@ class IntakeRouterAgent(Agent):
                 "Share one concise line in this format: "
                 "buyer: <who pays>; workflow: <step>; pain: <recurring problem>."
             )
-        if buyer and workflow and pain:
-            return False, ""
-        if len(tokens) >= 24 and not buyer:
+        if not buyer and not workflow and not pain:
+            return True, "I need a specific target audience or clear pain point to start researching. What exactly are they struggling with?"
+        if not buyer:
             return True, "Who is the primary buyer/user persona for this request?"
-        if len(tokens) >= 20 and not workflow:
-            return True, "What exact workflow step should research focus on?"
-        if len(tokens) >= 20 and not pain:
+        if not workflow and not pain:
+            return True, "What exact workflow step or problem should research focus on?"
+        if not pain:
             return True, "What recurring pain should be prioritized (time, errors, delays, or cost)?"
         return False, ""
 
