@@ -119,7 +119,7 @@ class IntakeRouterAgent(Agent):
     def __init__(self, name: str, role: str, system_prompt: str, color: str = "yellow"):
         super().__init__(name, role, system_prompt, color)
 
-    def process(self, input_data: str, context: Optional[List[Dict[str, str]]] = None) -> str:
+    def process(self, input_data: str, context: Optional[List[Dict[str, str]]] = None, system_overrides: str = None) -> str:
         raw_request = self._extract_user_request(input_data)
         
         fallback_request = raw_request
@@ -131,7 +131,7 @@ class IntakeRouterAgent(Agent):
                     fallback_request = f"{accumulated_text} {raw_request}"
 
         if self.client:
-            reply = super().process(input_data, context=context)
+            reply = super().process(input_data, context=context, system_overrides=system_overrides)
             try:
                 json_match = re.search(r'\{.*\}', reply, re.DOTALL)
                 if json_match:
@@ -141,7 +141,7 @@ class IntakeRouterAgent(Agent):
             except Exception:
                 pass
                     
-        plan = self._build_plan(fallback_request)
+        plan = self._build_plan(fallback_request, system_overrides=system_overrides)
         output = json.dumps(plan, indent=2)
         if not self.client:
             self.speak(output)
@@ -153,7 +153,7 @@ class IntakeRouterAgent(Agent):
             return input_data.split(marker, 1)[1].strip()
         return (input_data or "").strip()
 
-    def _build_plan(self, raw_request: str) -> Dict[str, Any]:
+    def _build_plan(self, raw_request: str, system_overrides: str = None) -> Dict[str, Any]:
         raw_text = (raw_request or "").strip()
         compact_text = re.sub(r"\s+", " ", raw_text).strip()
         parsed = self._parse_key_value_fields(raw_text)
@@ -244,6 +244,12 @@ class IntakeRouterAgent(Agent):
             intent=intent,
         )
 
+        source_priority = ["reddit", "forums", "reviews", "hackernews", "web"]
+        if system_overrides and "B2C" in system_overrides:
+            source_priority = ["reddit", "youtube", "forums", "reviews", "web"]
+        elif system_overrides and "B2B" in system_overrides:
+            source_priority = ["hackernews", "forums", "reviews", "web"]
+
         return {
             "intent": intent,
             "summary": summary,
@@ -258,7 +264,7 @@ class IntakeRouterAgent(Agent):
             "query_seed": query_seed,
             "must_include_terms": must_include_terms,
             "must_exclude_terms": must_exclude_terms,
-            "source_priority": ["reddit", "forums", "reviews", "hackernews", "web"],
+            "source_priority": source_priority,
             "clarification_needed": clarification_needed,
             "clarification_question": clarification_question,
             "confidence": confidence,

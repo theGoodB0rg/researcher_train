@@ -12,7 +12,7 @@ class FounderSalesValidatorAgent(Agent):
     def __init__(self, name: str, role: str, system_prompt: str, color: str = "green"):
         super().__init__(name, role, system_prompt, color)
     
-    def process(self, input_data: str, context: List[Dict[str, str]] = None) -> str:
+    def process(self, input_data: str, context: List[Dict[str, str]] = None, system_overrides: str = None) -> str:
         """
         Simulates founder sales feasibility to reach $5k MRR.
         Extracts target audience, pricing, and acquisition channel from prior research.
@@ -76,7 +76,7 @@ class FounderSalesValidatorAgent(Agent):
         # Pass to LLM
         enriched_input = f"{input_data}\n\n[FOUNDER SALES SIMULATION]\n{formatted}\n[END SIMULATION]"
         
-        return super().process(enriched_input, context)
+        return super().process(enriched_input, context, system_overrides=system_overrides)
     
     def _extract_pricing(self, context: List[Dict[str, str]]) -> Dict:
         """Extract pricing model from Strategist."""

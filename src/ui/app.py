@@ -52,6 +52,15 @@ class StreamlitPrintCapture:
 
 st.set_page_config(page_title="AI Research Co-Founder", page_icon="🕵️", layout="wide")
 
+st.sidebar.header("Project Settings")
+business_model = st.sidebar.radio("Business Model", ["B2B", "B2C"])
+target_mrr = st.sidebar.slider("Target MRR ($/mo)", min_value=1, max_value=5000, value=50, step=10, help="Minimum monthly revenue per user to sustain the business")
+
+project_settings = {
+    "business_model": business_model,
+    "target_mrr": target_mrr
+}
+
 st.title("🕵️ AI Research Co-Founder")
 st.markdown("Enter your idea or hypothesis to begin the buyer-aware iterative research process.")
 
@@ -101,26 +110,32 @@ if prompt := st.chat_input("E.g. I want to build a tool for plumbers to track in
         with StreamlitPrintCapture(status):
             # Extract context for the Chat Bot
             chat_context = [{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.messages[:-1]]
-            results = orchestrator.run_round_table(prompt, context=chat_context)
+            try:
+                orchestrator.run_round_table(
+                    prompt, 
+                    context=st.session_state.messages,
+                    project_settings=project_settings
+                )
+                
+                final_state = orchestrator.research_results.get('final_verdict', 'UNKNOWN')
+            except Exception as e:
+                st.error(f"An error occurred during orchestration: {e}")
+                final_state = "ERROR"
         
-        final_verdict = results.get('final_verdict', 'UNKNOWN')
-        if final_verdict == "CONVERSATIONAL":
+        if final_state == "CONVERSATIONAL":
             status.update(label="Response", state="complete", expanded=False)
         else:
             status.update(label="Research Complete!", state="complete", expanded=False)
         
-    with st.chat_message("assistant", avatar="🤖" if results.get('final_verdict') == "CONVERSATIONAL" else "🏁"):
-        final_verdict = results.get('final_verdict', 'UNKNOWN')
-        
-        if final_verdict == "CONVERSATIONAL":
-            reply = results.get("final_recommendation", "How can I help you refine this idea?")
+        if final_state == "CONVERSATIONAL":
+            reply = orchestrator.research_results.get("final_recommendation", "How can I help you refine this idea?")
             st.markdown(reply)
             st.session_state.messages.append({"role": "assistant", "content": reply})
         else:
-            st.markdown(f"### Research Complete\n**Final Verdict:** {final_verdict}")
+            st.markdown(f"### Research Complete\n**Final Verdict:** {final_state}")
             
-            if final_verdict in ["GO", "QUALIFIED"] and "final_idea" in results:
+            if final_state in ["GO", "QUALIFIED"] and "final_idea" in orchestrator.research_results:
                 st.markdown("### Validated Idea")
-                st.markdown(results["final_idea"])
+                st.markdown(orchestrator.research_results["final_idea"])
             
-            st.session_state.messages.append({"role": "assistant", "content": f"**Research Complete**\nVerdict: {final_verdict}"})
+            st.session_state.messages.append({"role": "assistant", "content": f"**Research Complete**\nVerdict: {final_state}"})

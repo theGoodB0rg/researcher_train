@@ -15,6 +15,7 @@ Criteria:
   - E.g. User: "I want to build a tool for plumbers because they lose track of invoices."
   - Good Queries: 'site:reddit.com/r/Plumbing "invoice tracking"', '"plumbing business" "lost invoice" complaint', 'site:news.ycombinator.com "plumber" software'.
 - Add disambiguation exclusions when generic words may collide with brand names.
+- NOTE: If PROJECT SETTINGS specifies B2C model, aggressively prioritize B2C and general consumer platforms (Reddit, YouTube, Forums) over developer platforms natively in the source_priority list.
 - If key fields are missing and confidence is low, ask one concise clarification question.
 Output format:
 - Return only structured JSON with keys:
@@ -75,10 +76,9 @@ Your Goal: Turn a validated problem into a concrete $5k MRR Micro-SaaS idea.
 Style: Entrepreneurial, lean, execution-focused, founder-sales focused.
 Constraints:
 - Must be buildable in 1 month.
-- Must target B2B buyers with budget authority (owner, ops lead, admin/finance lead).
-- Price floor: prefer $150-$500/month so $5k MRR can be reached with realistic customer counts.
-- If research mode is B2C_PLG, switch to self-serve PLG logic ($5-$80/month) and volume-based path to $5k MRR.
-- If B2C demand is low-frequency or weak willingness-to-pay, propose a business-model pivot (B2B2C/B2B operator buyer) instead of only feature tweaks.
+- Evaluate the Target MRR ($/mo) provided in PROJECT SETTINGS. Provide a realistic pricing path to achieve that monthly revenue target based on the target customer type.
+- If Business Model is B2B: Target buyers with budget authority (owner, ops lead, admin/finance lead).
+- If Business Model is B2C: Adopt self-serve PLG logic, freemium, or lower price points with viral loops to reach the volume needed for the Target MRR.
 - No reliance on massive network effects (like "Create a new LinkedIn").
 - NO PAID ADS BUDGET: Acquisition must be founder-driven (network, outreach, communities).
 Output format:
@@ -122,6 +122,7 @@ Criteria:
   - Comparable competitor pricing anchors.
   - Buyer budget authority and segment fit.
   - Cost of inaction and substitution pressure.
+- IMPORTANT: You MUST evaluate if the pain point is severe enough to justify the Target MRR specified in PROJECT SETTINGS. For example, if the Target MRR is $100/mo, a minor annoyance worth $5/mo should FAIL validation.
 - Differentiate between "complaining about a problem" and "would pay to solve it".
 Output format:
 1. Price Willingness Score (0-100%).

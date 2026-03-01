@@ -26,13 +26,17 @@ class Agent:
         print(colored(message, self.color))
         self.memory.append({"role": "assistant", "content": message})
 
-    def process(self, input_data: str, context: List[Dict[str, str]] = None) -> str:
+    def process(self, input_data: str, context: List[Dict[str, str]] = None, system_overrides: str = None) -> str:
         """
         Processes input and returns a response.
         If API key is present, calls LLM. Otherwise, returns a mock response.
         """
+        system_content = self.system_prompt
+        if system_overrides:
+            system_content += f"\n\nPROJECT SETTINGS / CONSTRAINTS:\n{system_overrides}"
+
         messages = [
-            {"role": "system", "content": self.system_prompt}
+            {"role": "system", "content": system_content}
         ]
 
         if context:
@@ -57,4 +61,3 @@ class Agent:
 
         self.speak(reply)
         return reply
-

@@ -9,7 +9,7 @@ class ScoutAgent(Agent):
         super().__init__(name, role, system_prompt, color)
         self.data_collector = DataCollector()
 
-    def process(self, input_data: str, context: List[Dict[str, str]] = None) -> str:
+    def process(self, input_data: str, context: List[Dict[str, str]] = None, system_overrides: str = None) -> str:
         # Extract scoped topic + research mode from orchestrator prompt.
         raw_topic = self._extract_topic(input_data)
         topic = self._strip_query_modifiers(raw_topic)
@@ -30,6 +30,10 @@ class ScoutAgent(Agent):
             print(colored(f"[Scout] Query seed hint accepted: {query_seed_hint}", "cyan"))
         if query_seed.lower() != topic.lower():
             print(colored(f"[Scout] Query seed (compacted): {query_seed}", "cyan"))
+        
+        # In a real system, we'd pull from configured APIs.
+        raw_data = self.data_collector.collect_data(input_data, context=context, system_overrides=system_overrides)
+        
         collection_result = self._collect_with_adaptive_strategy(
             topic=topic,
             query_seed=query_seed,
@@ -98,7 +102,8 @@ class ScoutAgent(Agent):
             "Do not output 'NO REAL DATA' when status is PASS."
         )
         
-        return super().process(enriched_input, context)
+        reply = super().process(f"{input_data}\n\n[COLLECTED REAL DATA]:\n{raw_data}", context=context, system_overrides=system_overrides)
+        return reply
 
     def _extract_topic(self, input_data: str) -> str:
         marker = "Find complaints and issues related to:"

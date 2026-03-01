@@ -16,7 +16,8 @@ class WillingnessToPayValidatorAgent(Agent):
     def __init__(self, name: str, role: str, system_prompt: str, color: str = "blue"):
         super().__init__(name, role, system_prompt, color)
 
-    def process(self, input_data: str, context: List[Dict[str, str]] = None) -> str:
+    def process(self, input_data: str, context: List[Dict[str, str]] = None, system_overrides: str = None) -> str:
+        reply = super().process(input_data, context=context, system_overrides=system_overrides)
         """
         Composite willingness model using:
         - direct payment intent signals,

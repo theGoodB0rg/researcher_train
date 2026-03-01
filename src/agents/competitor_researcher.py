@@ -43,7 +43,7 @@ class CompetitorResearcherAgent(Agent):
             "list",
         }
 
-    def process(self, input_data: str, context: Optional[List[Dict[str, str]]] = None) -> str:
+    def process(self, input_data: str, context: Optional[List[Dict[str, str]]] = None, system_overrides: str = None) -> str:
         idea_name, idea_description = self._extract_idea(context)
         if not idea_name:
             return self.speak_and_return("Unable to extract idea from context. Please ensure Strategist provided a clear pitch.")
@@ -54,7 +54,7 @@ class CompetitorResearcherAgent(Agent):
         formatted_analysis = self._format_findings(findings)
 
         enriched_input = f"{input_data}\n\n[COMPETITOR RESEARCH]\n{formatted_analysis}\n[END RESEARCH]"
-        return super().process(enriched_input, context)
+        return super().process(enriched_input, context, system_overrides=system_overrides)
 
     def _extract_idea(self, context: Optional[List[Dict[str, str]]]) -> Tuple[Optional[str], Optional[str]]:
         if not context:

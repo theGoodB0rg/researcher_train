@@ -20,6 +20,7 @@ class Orchestrator:
         self.conversation_history: List[Dict[str, str]] = []
         self.iteration_count = 0
         self.research_results: Dict[str, object] = {}
+        self.project_settings: Dict[str, Any] = {}
         self._reset_run_state(topic=None)
 
     def _reset_run_state(self, topic: Optional[str]):
@@ -70,7 +71,8 @@ class Orchestrator:
         }
         self.broadcast("Intake Plan", json.dumps(compact_plan))
 
-    def run_round_table(self, initial_topic: str, context: Optional[List[Dict[str, str]]] = None) -> Dict[str, object]:
+    def run_round_table(self, initial_topic: str, context: Optional[List[Dict[str, str]]] = None, project_settings: Optional[Dict[str, Any]] = None) -> Dict[str, object]:
+        self.project_settings = project_settings or {}
         self._reset_run_state(topic=initial_topic)
         if context:
             self.conversation_history = context
@@ -639,7 +641,12 @@ class Orchestrator:
         agent = self.agents.get(agent_name)
         if not agent:
             raise ValueError(f"Required agent missing: {agent_name}")
-        output = agent.process(prompt, context=context)
+            
+        system_overrides = None
+        if self.project_settings:
+            system_overrides = json.dumps(self.project_settings, indent=2)
+            
+        output = agent.process(prompt, context=context, system_overrides=system_overrides)
         self.broadcast(agent.name, output)
         return output
 
@@ -647,7 +654,12 @@ class Orchestrator:
         agent = self.agents.get(agent_name)
         if not agent:
             return None
-        output = agent.process(prompt, context=self.conversation_history)
+            
+        system_overrides = None
+        if self.project_settings:
+            system_overrides = json.dumps(self.project_settings, indent=2)
+            
+        output = agent.process(prompt, context=self.conversation_history, system_overrides=system_overrides)
         self.broadcast(agent.name, output)
         return output
 
